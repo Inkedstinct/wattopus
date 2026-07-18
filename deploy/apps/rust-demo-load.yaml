@@ -1,0 +1,26 @@
+# constant background traffic for the rust demo app. optional.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rust-demo-load
+  namespace: wattopus
+  labels: { app: rust-demo-load }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: rust-demo-load }
+  template:
+    metadata:
+      labels: { app: rust-demo-load }
+    spec:
+      containers:
+        - name: load
+          image: curlimages/curl
+          command: [sh, -c]
+          args:
+            - while true; do
+                curl -s app-gateway:8000/checkout >/dev/null;
+                curl -s app-gateway:8000/catalog >/dev/null;
+                curl -s app-gateway:8000/report >/dev/null;
+                sleep 0.5;
+              done

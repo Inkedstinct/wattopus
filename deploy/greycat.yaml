@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: greycat
+  namespace: wattopus
+  labels: { app: greycat }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: greycat }
+  template:
+    metadata:
+      labels: { app: greycat }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: greycat
+          image: inkedstinct/greycat-twin:0.3
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8080 }]
+          volumeMounts:
+            - { name: data, mountPath: /app/gcdata }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: greycat
+  namespace: wattopus
+spec:
+  selector: { app: greycat }
+  type: NodePort
+  ports: [{ port: 8080, nodePort: 30808 }]

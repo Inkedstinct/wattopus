@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wattopus cluster</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #14161a; color: #d8dbe0; }
+  header { padding: 10px 14px; border-bottom: 1px solid #2a2e35; }
+  header b { color: #fff; }
+  main { padding: 12px; overflow: auto; }
+  img { max-width: 100%; background: #fff; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header><b>wattopus cluster</b> - diagram updated <span id="t">loading...</span></header>
+<main><img id="d" src="diagram.png" alt="cluster diagram"></main>
+<script>
+async function tick() {
+  try {
+    const r = await fetch('updated.txt?x=' + Date.now());
+    const ts = (await r.text()).trim();
+    if (ts && ts !== document.getElementById('t').textContent) {
+      document.getElementById('t').textContent = ts;
+      document.getElementById('d').src = 'diagram.png?x=' + Date.now();
+    }
+  } catch (e) { /* server briefly away: keep last image */ }
+  setTimeout(tick, 5000);
+}
+tick();
+</script>
+</body>
+</html>

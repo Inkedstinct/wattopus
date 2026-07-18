@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predictor
+  namespace: wattopus
+  labels: { app: predictor }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: predictor }
+  template:
+    metadata:
+      labels: { app: predictor }
+    spec:
+      containers:
+        - name: predictor
+          image: inkedstinct/predictor:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: GREYCAT_URL, value: http://greycat:8080 }
+            # poll at the feeder's cadence; the timestamp dedup makes an
+            # off-by-one tick harmless
+            - { name: INTERVAL, value: "30" }
+            - { name: WINDOW, value: "12" }

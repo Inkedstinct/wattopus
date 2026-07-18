@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-gateway
+  namespace: wattopus
+  labels: { app: app-gateway }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: app-gateway }
+  template:
+    metadata:
+      labels: { app: app-gateway }
+    spec:
+      containers:
+        - name: app
+          image: inkedstinct/app:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: ROLE, value: gateway }
+            - { name: OTEL_SERVICE_NAME, value: app-gateway }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector:4318 }
+          ports: [{ containerPort: 8000 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-gateway
+  namespace: wattopus
+spec:
+  selector: { app: app-gateway }
+  ports: [{ port: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-compute
+  namespace: wattopus
+  labels: { app: app-compute }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: app-compute }
+  template:
+    metadata:
+      labels: { app: app-compute }
+    spec:
+      containers:
+        - name: app
+          image: inkedstinct/app:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: ROLE, value: compute }
+            - { name: OTEL_SERVICE_NAME, value: app-compute }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector:4318 }
+          ports: [{ containerPort: 8000 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-compute
+  namespace: wattopus
+spec:
+  selector: { app: app-compute }
+  ports: [{ port: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-store
+  namespace: wattopus
+  labels: { app: app-store }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: app-store }
+  template:
+    metadata:
+      labels: { app: app-store }
+    spec:
+      containers:
+        - name: app
+          image: inkedstinct/app:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: ROLE, value: store }
+            - { name: OTEL_SERVICE_NAME, value: app-store }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector:4318 }
+          ports: [{ containerPort: 8000 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-store
+  namespace: wattopus
+spec:
+  selector: { app: app-store }
+  ports: [{ port: 8000 }]

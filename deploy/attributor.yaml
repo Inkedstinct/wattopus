@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: attributor
+  namespace: wattopus
+  labels: { app: attributor }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: attributor }
+  template:
+    metadata:
+      labels: { app: attributor }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9500"
+    spec:
+      containers:
+        - name: attributor
+          image: inkedstinct/attributor:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: PROM_URL, value: http://prometheus:9090 }
+            - { name: POWER_QUERY, value: "sum by (namespace, pod) (mockpower_pod_watts)" }
+          ports:
+            - { containerPort: 4318 }
+            - { containerPort: 9500 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: attributor
+  namespace: wattopus
+spec:
+  selector: { app: attributor }
+  ports:
+    - { name: otlp-http, port: 4318 }
+    - { name: metrics, port: 9500 }
