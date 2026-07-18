@@ -1,0 +1,17 @@
+[package]
+name = "predictor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "predictor"
+path = "src/main.rs"
+
+[dependencies]
+ingest = { path = "../ingest" }
+ureq.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true

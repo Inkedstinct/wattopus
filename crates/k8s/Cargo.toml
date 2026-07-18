@@ -1,0 +1,13 @@
+[package]
+name = "k8s"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ureq = { version = "2.9", default-features = false, features = ["json", "gzip", "tls"] }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+rustls-pemfile = "2"
