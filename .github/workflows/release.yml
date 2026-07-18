@@ -1,0 +1,26 @@
+# build every image at the tag's version
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: inkedstinct
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - run: make build REGISTRY=$REGISTRY TAG=$VERSION
+      - run: docker build -t $REGISTRY/kubediagram:$VERSION deploy/kubediagram
+      # Try to have a dynamic list but dk how
+      - name: push
+        if: env.DOCKERHUB_TOKEN != ''
+        run: |
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          for img in app attributor feeder operator mockpower predictor greycat-twin kubediagram; do
+            docker push $REGISTRY/$img:$VERSION
+          done
