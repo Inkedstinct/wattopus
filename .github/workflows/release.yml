@@ -1,7 +1,7 @@
 # build every image at the tag's version
 on:
   push:
-    tags: ['v*']
+    tags: ['[0-9]*']
 
 jobs:
   images:
