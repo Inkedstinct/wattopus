@@ -1,0 +1,197 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: wattopus
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        url: http://prometheus:9090
+        isDefault: true
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        url: http://tempo:3200
+      - name: Infinity
+        uid: infinity
+        type: yesoreyeram-infinity-datasource
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: wattopus
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: wattopus
+        type: file
+        options: { path: /var/lib/grafana/dashboards }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: wattopus
+data:
+  wattopus-twin.json: |
+    {
+      "uid": "wattopus-twin",
+      "title": "Wattopus Twin",
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "schemaVersion": 39,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "type": "nodeGraph",
+          "title": "twin graph test2",
+          "gridPos": { "h": 17, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+          "options": {},
+          "targets": [
+            {
+              "refId": "nodes",
+              "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+              "type": "json",
+              "source": "url",
+              "format": "table",
+              "parser": "backend",
+              "url": "http://greycat:8080/twin::graph_nodes",
+              "url_options": {
+                "method": "POST",
+                "body_type": "raw",
+                "body_content_type": "application/json",
+                "data": "[]",
+                "headers": [{ "key": "accept", "value": "application/json" }]
+              },
+              "root_selector": "",
+              "columns": []
+            },
+            {
+              "refId": "edges",
+              "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+              "type": "json",
+              "source": "url",
+              "format": "table",
+              "parser": "backend",
+              "url": "http://greycat:8080/twin::graph_edges",
+              "url_options": {
+                "method": "POST",
+                "body_type": "raw",
+                "body_content_type": "application/json",
+                "data": "[]",
+                "headers": [{ "key": "accept", "value": "application/json" }]
+              },
+              "root_selector": "",
+              "columns": []
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "route power (W)",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "wattopus_route_power_watts",
+              "legendFormat": "{{route}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "volkovlabs-image-panel",
+          "title": "cluster diagram",
+          "gridPos": { "h": 16, "w": 24, "x": 0, "y": 25 },
+          "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+          "options": {
+            "mediaSources": [
+              { "id": "diagram", "type": "image", "field": "png", "refId": "diagram" }
+            ]
+          },
+          "targets": [
+            {
+              "refId": "diagram",
+              "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+              "type": "json",
+              "source": "url",
+              "format": "table",
+              "parser": "backend",
+              "url": "http://kubediagram:8000/diagram.json",
+              "url_options": { "method": "GET" },
+              "root_selector": "",
+              "columns": [
+                { "selector": "png", "text": "png", "type": "string" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: wattopus
+  labels: { app: grafana }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.1.0
+          env:
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+            - { name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Admin }
+            - { name: GF_AUTH_DISABLE_LOGIN_FORM, value: "true" }
+            - { name: GF_INSTALL_PLUGINS, value: "yesoreyeram-infinity-datasource,volkovlabs-image-panel" }
+          ports: [{ containerPort: 3000 }]
+          volumeMounts:
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: dashboard-provider, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+        - name: datasources
+          configMap: { name: grafana-datasources }
+        - name: dashboard-provider
+          configMap: { name: grafana-dashboard-provider }
+        - name: dashboards
+          configMap: { name: grafana-dashboards }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: wattopus
+spec:
+  selector: { app: grafana }
+  type: NodePort
+  ports: [{ port: 3000, nodePort: 30300 }]

@@ -1,0 +1,26 @@
+# default power meter, for local testers
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mockpower
+  namespace: wattopus
+  labels: { app: mockpower }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mockpower }
+  template:
+    metadata:
+      labels: { app: mockpower }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9105"
+    spec:
+      containers:
+        - name: mockpower
+          image: inkedstinct/mockpower:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: PROM_URL, value: http://prometheus:9090 }
+            - { name: WATTS_PER_CORE, value: "10" }
+          ports: [{ containerPort: 9105 }]

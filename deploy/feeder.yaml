@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: feeder
+  namespace: wattopus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: wattopus-feeder
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, services, namespaces]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: wattopus-feeder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: wattopus-feeder
+subjects:
+  - kind: ServiceAccount
+    name: feeder
+    namespace: wattopus
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feeder
+  namespace: wattopus
+  labels: { app: feeder }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: feeder }
+  template:
+    metadata:
+      labels: { app: feeder }
+    spec:
+      serviceAccountName: feeder
+      containers:
+        - name: feeder
+          image: inkedstinct/feeder:0.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: PROM_URL, value: http://prometheus:9090 }
+            - { name: GREYCAT_URL, value: http://greycat:8080 }
+            - { name: POWER_QUERY, value: "sum by (namespace, pod) (mockpower_pod_watts)" }
