@@ -1,0 +1,19 @@
+[package]
+name = "feeder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "feeder"
+path = "src/main.rs"
+
+[dependencies]
+ingest = { path = "../ingest" }
+k8s = { path = "../k8s" }
+ureq.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
