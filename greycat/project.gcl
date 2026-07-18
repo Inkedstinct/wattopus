@@ -1,0 +1,9 @@
+// run: greycat install && greycat serve --user=1
+
+@library("std", "7.5.142-stable");
+@library("explorer", "7.8.19-stable"); // currently not used
+@include("server");
+
+fn main() {
+    println("wattopus twin ready, POST /twin::ingest");
+}

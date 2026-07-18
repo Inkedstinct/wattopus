@@ -1,0 +1,559 @@
+// module = twin. everything callable at POST /twin::<fn> with a JSON args array.
+// simulate_scale MUTATES the twin (staged_replicas)
+// the operator either commits (after changing k8s) or rolls back
+
+// TODO: shall parent element (e.g. deployment) shall contains children (e.g. pods) ?
+// TODO: Check for Claude skill designed by Datathings
+// TODO: split as there are already two couplings
+
+var knodes: nodeIndex<String, node<KNode>>;
+var namespaces: nodeIndex<String, node<Namespace>>;
+
+type Res {
+    cpu_usage: float;
+    cpu_available: float;
+    ram_usage: float;
+    ram_available: float;
+    disk_usage: float;
+    disk_available: float;
+    joules: float;
+}
+
+type KNode {
+    name: String;
+    metrics: nodeTime<Res>;
+}
+
+type Namespace {
+    name: String;
+    deployments: nodeIndex<String, node<Deployment>>;
+    services: nodeIndex<String, node<KService>>;
+    pods: nodeIndex<String, node<Pod>>;
+    metrics: nodeTime<Res>;
+}
+
+type Deployment {
+    name: String;
+    namespace: String;
+    replicas: int;
+    staged_replicas: int;
+    metrics: nodeTime<Res>;
+    predictions: nodeTime<Prediction>?; // nullable so pre-existing graphs still load
+}
+
+type KService {
+    name: String;
+    namespace: String;
+    deployment: String;
+}
+
+type Pod {
+    name: String;
+    namespace: String;
+    knode: String;
+    deployment: String;
+    metrics: nodeTime<Res>;
+    containers: nodeIndex<String, node<Container>>;
+}
+
+type Container {
+    name: String;
+    pod: String;
+    metrics: nodeTime<Res>;
+}
+
+// wire shapes for ingest, mirroring crates/ingest. keep field names in sync.
+
+@volatile
+private type InRes {
+    cpu_usage: float;
+    cpu_available: float;
+    ram_usage: float;
+    ram_available: float;
+    disk_usage: float;
+    disk_available: float;
+    joules: float;
+}
+@volatile
+private type InNode {
+    name: String;
+    metrics: InRes;
+}
+@volatile
+private type InNamespace {
+    name: String;
+    metrics: InRes;
+}
+@volatile
+private type InDeployment {
+    namespace: String;
+    name: String;
+    replicas: int;
+    metrics: InRes;
+}
+@volatile
+private type InService {
+    namespace: String;
+    name: String;
+    deployment: String;
+}
+@volatile
+private type InPod {
+    namespace: String;
+    name: String;
+    knode: String;
+    deployment: String;
+    metrics: InRes;
+}
+@volatile
+private type InContainer {
+    namespace: String;
+    pod: String;
+    name: String;
+    metrics: InRes;
+}
+@volatile
+private type InSnapshot {
+    timestamp: int;
+    nodes: Array<InNode>;
+    namespaces: Array<InNamespace>;
+    deployments: Array<InDeployment>;
+    services: Array<InService>;
+    pods: Array<InPod>;
+    containers: Array<InContainer>;
+}
+
+private fn to_res(m: InRes): Res {
+    return Res {
+        cpu_usage: m.cpu_usage,
+        cpu_available: m.cpu_available,
+        ram_usage: m.ram_usage,
+        ram_available: m.ram_available,
+        disk_usage: m.disk_usage,
+        disk_available: m.disk_available,
+        joules: m.joules
+    };
+}
+
+// newest sample of a series, or null if empty
+
+private fn last_of<T>(series: nodeTime<T>): T? {
+    var t = series.lastTime();
+    if (t == null) {
+        return null;
+    }
+    return series.resolveAt(t);
+}
+
+private fn last_seconds(series: nodeTime<Res>): int {
+    var t = series.lastTime();
+    if (t == null) {
+        return 0;
+    }
+    return t.to(DurationUnit::seconds);
+}
+
+// get-or-create: the feeder inserts the same entities every tick
+
+private fn ensure_ns(name: String): node<Namespace> {
+    var ns = namespaces.get(name);
+    if (ns == null) {
+        ns = node<Namespace> {
+            Namespace {
+                name: name,
+                deployments: nodeIndex<String, node<Deployment>> {},
+                services: nodeIndex<String, node<KService>> {},
+                pods: nodeIndex<String, node<Pod>> {},
+                metrics: nodeTime<Res> {}
+            }
+        };
+        namespaces.set(name, ns);
+    }
+    return ns;
+}
+
+private fn ensure_knode(name: String): node<KNode> {
+    var kn = knodes.get(name);
+    if (kn == null) {
+        kn = node<KNode> { KNode { name: name, metrics: nodeTime<Res> {} } };
+        knodes.set(name, kn);
+    }
+    return kn;
+}
+
+private fn ensure_deployment(ns: node<Namespace>, d: InDeployment): node<Deployment> {
+    var dep = ns->deployments.get(d.name);
+    if (dep == null) {
+        dep = node<Deployment> {
+            Deployment {
+                name: d.name,
+                namespace: d.namespace,
+                replicas: d.replicas,
+                staged_replicas: d.replicas,
+                metrics: nodeTime<Res> {}
+            }
+        };
+        ns->deployments.set(d.name, dep);
+    }
+    return dep;
+}
+
+private fn ensure_pod(ns: node<Namespace>, p: InPod): node<Pod> {
+    var pod = ns->pods.get(p.name);
+    if (pod == null) {
+        pod = node<Pod> {
+            Pod {
+                name: p.name,
+                namespace: p.namespace,
+                knode: p.knode,
+                deployment: p.deployment,
+                metrics: nodeTime<Res> {},
+                containers: nodeIndex<String, node<Container>> {}
+            }
+        };
+        ns->pods.set(p.name, pod);
+    }
+    return pod;
+}
+
+// Contract with the feeder
+// TODO : Check to make it stronger, currently fails on tests only
+@expose
+fn ingest(s: InSnapshot) {
+    var t = time::new(s.timestamp, DurationUnit::seconds);
+
+    for (_, n in s.nodes) {
+        ensure_knode(n.name)->metrics.setAt(t, to_res(n.metrics));
+    }
+
+    for (_, i in s.namespaces) {
+        ensure_ns(i.name)->metrics.setAt(t, to_res(i.metrics));
+    }
+
+    for (_, d in s.deployments) {
+        var dep = ensure_deployment(ensure_ns(d.namespace), d);
+        dep->replicas = d.replicas;
+        dep->metrics.setAt(t, to_res(d.metrics));
+    }
+
+    for (_, sv in s.services) {
+        var ns = ensure_ns(sv.namespace);
+        if (ns->services.get(sv.name) == null) {
+            ns->services.set(
+                sv.name,
+                node<KService> {
+                    KService { name: sv.name, namespace: sv.namespace, deployment: sv.deployment }
+                }
+            );
+        }
+    }
+
+    for (_, p in s.pods) {
+        ensure_pod(ensure_ns(p.namespace), p)->metrics.setAt(t, to_res(p.metrics));
+    }
+
+    for (_, c in s.containers) {
+        var pod = ensure_ns(c.namespace)->pods.get(c.pod);
+        if (pod == null) {
+            continue;
+        }
+        var cont = pod->containers.get(c.name);
+        if (cont == null) {
+            cont = node<Container> { Container { name: c.name, pod: c.pod, metrics: nodeTime<Res> {} } };
+            pod->containers.set(c.name, cont);
+        }
+        cont->metrics.setAt(t, to_res(c.metrics));
+    }
+}
+
+private fn find_deployment(ns_name: String, name: String): node<Deployment>? {
+    var ns = namespaces.get(ns_name);
+    if (ns == null) {
+        return null;
+    }
+    return ns->deployments.get(name);
+}
+
+// mirrors ScaleSimulation in crates/ingest, keep field names in sync
+// used in simulate_scale for decision making by the operator
+type ScaleSimulation {
+    current_replicas: float;
+    target_replicas: float;
+    cpu_per_pod_now: float;
+    cpu_per_pod_predicted: float;
+    joules_per_interval_now: float;
+    joules_per_interval_predicted: float;
+}
+
+@expose
+fn simulate_scale(ns_name: String, name: String, replicas: int): ScaleSimulation? {
+    var d = find_deployment(ns_name, name);
+    if (d == null || d->replicas <= 0 || replicas <= 0) {
+        return null;
+    }
+    var m = last_of(d->metrics);
+    if (m == null) {
+        return null;
+    }
+
+    d->staged_replicas = replicas;
+
+    var current = d->replicas + 0.0;
+    var target = replicas + 0.0;
+    return ScaleSimulation {
+        current_replicas: current,
+        target_replicas: target,
+        cpu_per_pod_now: m.cpu_usage / current,
+        cpu_per_pod_predicted: m.cpu_usage / target,
+        joules_per_interval_now: m.joules,
+        joules_per_interval_predicted: m.joules * target / current
+    };
+}
+
+// Application of decision based on Operator feedback
+@expose
+fn commit_scale(ns_name: String, name: String): bool {
+    var d = find_deployment(ns_name, name);
+    if (d == null) {
+        return false;
+    }
+    d->replicas = d->staged_replicas;
+    return true;
+}
+
+@expose
+fn rollback_scale(ns_name: String, name: String): bool {
+    var d = find_deployment(ns_name, name);
+    if (d == null) {
+        return false;
+    }
+    d->staged_replicas = d->replicas;
+    return true;
+}
+
+@expose
+fn staged(ns_name: String, name: String): Array<int>? {
+    var d = find_deployment(ns_name, name);
+    if (d == null) {
+        return null;
+    }
+    return Array<int> { d->replicas, d->staged_replicas };
+}
+
+
+type DeployRef {
+    namespace: String;
+    name: String;
+}
+type LatestSample {
+    timestamp: int;
+    cpu_usage: float;
+    joules: float;
+}
+type Prediction {
+    timestamp: int;
+    cpu_predicted: float;
+    joules_predicted: float;
+    quiescent: bool;
+}
+
+@volatile
+private type InPrediction {
+    namespace: String;
+    name: String;
+    timestamp: int;
+    cpu_predicted: float;
+    joules_predicted: float;
+    quiescent: bool;
+}
+
+@expose
+fn deployments(): Array<DeployRef> {
+    var out = Array<DeployRef> {};
+    for (_, ns in namespaces) {
+        for (_, d in ns->deployments) {
+            out.add(DeployRef { namespace: d->namespace, name: d->name });
+        }
+    }
+    return out;
+}
+
+// TODO : Shall we have on method for each type ? is there a "match" pattern ?
+@expose
+fn latest(ns_name: String, name: String): LatestSample? {
+    var d = find_deployment(ns_name, name);
+    if (d == null) {
+        return null;
+    }
+    var last = d->metrics.lastTime();
+    if (last == null) {
+        return null;
+    }
+    var m = d->metrics.resolveAt(last);
+    if (m == null) {
+        return null;
+    }
+    return LatestSample {
+        timestamp: last.to(DurationUnit::seconds),
+        cpu_usage: m.cpu_usage,
+        joules: m.joules
+    };
+}
+
+@expose
+fn ingest_prediction(p: InPrediction): null {
+    var d = find_deployment(p.namespace, p.name);
+    if (d == null) {
+        return;
+    }
+    d->predictions ?= nodeTime<Prediction> {};
+    d->predictions.setAt(
+        time::new(p.timestamp, DurationUnit::seconds),
+        Prediction {
+            timestamp: p.timestamp,
+            cpu_predicted: p.cpu_predicted,
+            joules_predicted: p.joules_predicted,
+            quiescent: p.quiescent
+        }
+    );
+}
+
+@expose
+fn last_prediction(ns_name: String, name: String): Prediction? {
+    var d = find_deployment(ns_name, name);
+    if (d == null || d->predictions == null) {
+        return null;
+    }
+    return last_of(d->predictions);
+}
+
+// grafana coupling
+// TODO : Check contract 
+
+type GraphNode {
+    id: String;
+    title: String;
+    subTitle: String;
+    mainStat: float;
+    secondaryStat: float;
+    detail__cpu: float;
+    detail__joules: float;
+    detail__replicas: int;
+    detail__quiescent: int; // 1 yes, 0 no, -1 no prediction yet
+}
+type GraphEdge {
+    id: String;
+    source: String;
+    target: String;
+}
+
+// pods linger in the twin after deletion (feeder only upserts); hide the ones
+// whose last sample is older than the namespace's by more than this.
+
+private fn fresh(ns_last: int, series: nodeTime<Res>): bool {
+    var t = series.lastTime();
+    if (t == null) {
+        return false;
+    }
+    return ns_last - t.to(DurationUnit::seconds) < 90;
+}
+
+private fn quiescence(d: node<Deployment>): int {
+    var series = d->predictions;
+    if (series == null) {
+        return -1;
+    }
+    var p = last_of(series);
+    if (p == null) {
+        return -1;
+    }
+    if (p.quiescent) {
+        return 1;
+    }
+    return 0;
+}
+
+private fn gnode(
+    id: String, title: String, kind: String, m: Res?, secondary: float, replicas: int, quiescent: int
+): GraphNode {
+    return GraphNode {
+        id: id,
+        title: title,
+        subTitle: kind,
+        mainStat: m?.joules ?? 0.0,
+        secondaryStat: secondary,
+        detail__cpu: m?.cpu_usage ?? 0.0,
+        detail__joules: m?.joules ?? 0.0,
+        detail__replicas: replicas,
+        detail__quiescent: quiescent
+    };
+}
+
+@expose
+fn graph_nodes(): Array<GraphNode> {
+    var out = Array<GraphNode> {};
+    for (_, kn in knodes) {
+        var m = last_of(kn->metrics);
+        out.add(gnode("node/${kn->name}", kn->name, "knode", m, m?.cpu_usage ?? 0.0, 0, -1));
+    }
+    for (_, ns in namespaces) {
+        var ns_last = last_seconds(ns->metrics);
+        var m = last_of(ns->metrics);
+        out.add(gnode("ns/${ns->name}", ns->name, "namespace", m, m?.cpu_usage ?? 0.0, 0, -1));
+
+        for (_, d in ns->deployments) {
+            out.add(gnode(
+                    "deploy/${d->namespace}/${d->name}",
+                    d->name,
+                    "deployment",
+                    last_of(d->metrics),
+                    d->replicas + 0.0,
+                    d->replicas,
+                    quiescence(d)
+                ));
+        }
+        for (_, p in ns->pods) {
+            if (!fresh(ns_last, p->metrics)) {
+                continue;
+            }
+            var pm = last_of(p->metrics);
+            out.add(gnode(
+                    "pod/${p->namespace}/${p->name}",
+                    p->name,
+                    "pod",
+                    pm,
+                    pm?.cpu_usage ?? 0.0,
+                    0,
+                    -1
+                ));
+        }
+    }
+    return out;
+}
+
+@expose
+fn graph_edges(): Array<GraphEdge> {
+    var out = Array<GraphEdge> {};
+    for (_, ns in namespaces) {
+        var ns_last = last_seconds(ns->metrics);
+
+        for (_, d in ns->deployments) {
+            var did = "deploy/${d->namespace}/${d->name}";
+            out.add(GraphEdge { id: "ns/${ns->name}>${did}", source: "ns/${ns->name}", target: did });
+        }
+        for (_, p in ns->pods) {
+            if (!fresh(ns_last, p->metrics)) {
+                continue;
+            }
+            var pid = "pod/${p->namespace}/${p->name}";
+            if (p->deployment != "") {
+                var did = "deploy/${p->namespace}/${p->deployment}";
+                out.add(GraphEdge { id: "${did}>${pid}", source: did, target: pid });
+            }
+            if (p->knode != "") {
+                out.add(GraphEdge { id: "${pid}>node/${p->knode}", source: pid, target: "node/${p->knode}" });
+            }
+        }
+    }
+    return out;
+}

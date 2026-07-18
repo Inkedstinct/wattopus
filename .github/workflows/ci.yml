@@ -1,0 +1,36 @@
+# build + tests + twin contract against a real greycat serve built from greycat/Dockerfile.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.75.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
+      - run: cargo test --workspace --locked
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t twin greycat/
+      - run: docker run -d --name twin -p 8080:8080 twin
+      - name: wait for the twin
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS -X POST -H 'content-type: application/json' -d '[]' \
+              http://localhost:8080/twin::deployments >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "twin never worked up"; exit 1
+      - run: schema/check-twin.sh http://localhost:8080
+      - if: failure()
+        run: docker logs twin

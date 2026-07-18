@@ -1,0 +1,87 @@
+{
+  "timestamp": 1730800000,
+  "nodes": [
+    {
+      "name": "node-1",
+      "metrics": {
+        "cpu_usage": 0.6,
+        "cpu_available": 3.4,
+        "ram_usage": 1073741824.0,
+        "ram_available": 7516192768.0,
+        "disk_usage": 2147483648.0,
+        "disk_available": 19327352832.0,
+        "joules": 90.0
+      }
+    }
+  ],
+  "namespaces": [
+    {
+      "name": "wattopus",
+      "metrics": {
+        "cpu_usage": 0.6,
+        "cpu_available": 0.0,
+        "ram_usage": 1073741824.0,
+        "ram_available": 0.0,
+        "disk_usage": 2147483648.0,
+        "disk_available": 0.0,
+        "joules": 90.0
+      }
+    }
+  ],
+  "deployments": [
+    {
+      "namespace": "wattopus",
+      "name": "app-store",
+      "replicas": 2,
+      "metrics": {
+        "cpu_usage": 0.2,
+        "cpu_available": 0.0,
+        "ram_usage": 268435456.0,
+        "ram_available": 0.0,
+        "disk_usage": 536870912.0,
+        "disk_available": 0.0,
+        "joules": 30.0
+      }
+    }
+  ],
+  "services": [
+    {
+      "namespace": "wattopus",
+      "name": "app-store",
+      "deployment": "app-store"
+    }
+  ],
+  "pods": [
+    {
+      "namespace": "wattopus",
+      "name": "app-store-6f9d8c-abcde",
+      "knode": "node-1",
+      "deployment": "app-store",
+      "metrics": {
+        "cpu_usage": 0.1,
+        "cpu_available": 0.0,
+        "ram_usage": 134217728.0,
+        "ram_available": 0.0,
+        "disk_usage": 268435456.0,
+        "disk_available": 0.0,
+        "joules": 15.0
+      }
+    }
+  ],
+  "containers": [
+    {
+      "namespace": "wattopus",
+      "pod": "app-store-6f9d8c-abcde",
+      "name": "app",
+      "metrics": {
+        "cpu_usage": 0.1,
+        "cpu_available": 0.0,
+        "ram_usage": 134217728.0,
+        "ram_available": 0.0,
+        "disk_usage": 268435456.0,
+        "disk_available": 0.0,
+        "joules": 0.0
+      }
+    }
+  ]
+}
