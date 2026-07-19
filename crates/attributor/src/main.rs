@@ -11,9 +11,8 @@ use attributor::{attribute, parse, weights, Span};
 struct Metrics {
     energy: HashMap<String, f64>,
     power: HashMap<String, f64>,
-    // (namespace, pod) -> watts nobody claimed this tick, the detail behind _unattributed
+    service_route: HashMap<(String, String), f64>,
     unattributed: HashMap<(String, String), f64>,
-    // busy trace seconds per pod-second of wall clock; >1 means parallel spans
     coverage: HashMap<String, f64>,
     unresolved: usize,
 }
@@ -64,6 +63,15 @@ fn render(m: &Metrics, timestamp: u64) -> String {
             w
         ));
     }
+    out.push_str("# TYPE wattopus_service_route_power_watts gauge\n");
+    for ((svc, route), w) in &m.service_route {
+        out.push_str(&format!(
+            "wattopus_service_route_power_watts{{service=\"{}\",route=\"{}\"}} {}\n",
+            escape(svc),
+            escape(route),
+            w
+        ));
+    }
     out.push_str("# TYPE wattopus_unattributed_pod_watts gauge\n");
     for ((ns, pod), w) in &m.unattributed {
         out.push_str(&format!(
@@ -105,12 +113,11 @@ fn main() {
     let metrics = Arc::new(Mutex::new(Metrics {
         energy: HashMap::new(),
         power: HashMap::new(),
+        service_route: HashMap::new(),
         unattributed: HashMap::new(),
         coverage: HashMap::new(),
         unresolved: 0,
     }));
-
-    // OTLP receiver on :4318
 
     
     {
@@ -147,7 +154,6 @@ fn main() {
         });
     }
 
-    // Prometheus exposition on :9500
     {
         let metrics = metrics.clone();
         let server = Server::http("0.0.0.0:9500").expect("bind :9500");
@@ -181,6 +187,7 @@ fn main() {
             *m.energy.entry(route.clone()).or_default() += w * elapsed;
             m.power.insert(route.clone(), *w);
         }
+        m.service_route = a.service_route_watts;
         m.unattributed = a.unattributed;
         m.coverage = a
             .services

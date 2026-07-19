@@ -197,6 +197,66 @@ data:
               "legendFormat": "{{service}}"
             }
           ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "smeared watts by service (power x (1 - coverage))",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 49 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 1, "fillOpacity": 25, "stacking": { "mode": "normal" } }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (service) (wattopus_service_route_power_watts) * on(service) (1 - clamp_max(wattopus_service_trace_coverage, 1))",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "conservation gap (meter - attributed, W)",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 57 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 2, "fillOpacity": 10 }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byFrameRefID", "options": "B" },
+                "properties": [{ "id": "unit", "value": "percent" }]
+              }
+            ]
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(mockpower_pod_watts) - sum(wattopus_route_power_watts)",
+              "legendFormat": "unaccounted watts"
+            },
+            {
+              "refId": "B",
+              "expr": "100 * (1 - sum(wattopus_route_power_watts) / sum(mockpower_pod_watts))",
+              "legendFormat": "unaccounted %"
+            }
+          ]
         }
       ]
     }

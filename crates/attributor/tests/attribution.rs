@@ -83,6 +83,16 @@ fn unattributed_detail_sums_to_bucket() {
 }
 
 #[test]
+fn service_route_split_sums_to_routes() {
+    let a = attribute(&weights(&parse(&otlp(), "http.route")), &sample_watts());
+    assert!((a.service_route_watts[&("app-gateway".into(), "/checkout".into())] - 4.0).abs() < 1e-9);
+    assert!((a.service_route_watts[&("app-compute".into(), "/checkout".into())] - 2.0).abs() < 1e-9);
+    let split: f64 = a.service_route_watts.values().sum();
+    let routes: f64 = a.route_watts.values().sum::<f64>() - a.route_watts["_unattributed"];
+    assert!((split - routes).abs() < 1e-9);
+}
+
+#[test]
 fn services_report_claimed_pods_and_busy_seconds() {
     let a = attribute(&weights(&parse(&otlp(), "http.route")), &sample_watts());
     let (pods, busy) = a.services["app-gateway"];

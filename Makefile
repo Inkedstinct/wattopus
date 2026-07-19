@@ -8,10 +8,10 @@ build:
 	done
 	docker build -t $(REGISTRY)/greycat-twin:$(TAG) greycat
 
-deploy:
+deploy-base:
 	kubectl apply -f deploy/
 
-undeploy:
+undeploy-base:
 	kubectl delete -f deploy/ --ignore-not-found
 
 deploy-rust-demo:
