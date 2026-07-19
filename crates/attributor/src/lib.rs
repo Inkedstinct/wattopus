@@ -67,11 +67,19 @@ pub fn weights(spans: &[Span]) -> HashMap<(String, String), f64> {
     w
 }
 
-/// returns (route -> watts, unresolved service count)
+pub struct Attribution {
+    pub route_watts: HashMap<String, f64>,
+    /// unclaimed (namespace, pod) -> watts; sums to route_watts["_unattributed"]
+    pub unattributed: HashMap<(String, String), f64>,
+    /// traced service -> (claimed pods, busy seconds); busy/(interval*pods) = coverage
+    pub services: HashMap<String, (usize, f64)>,
+    pub unresolved: usize,
+}
+
 pub fn attribute(
     weights: &HashMap<(String, String), f64>,
     pod_watts: &HashMap<(String, String), f64>,
-) -> (HashMap<String, f64>, usize) {
+) -> Attribution {
     let mut per_service: HashMap<&str, HashMap<&str, f64>> = HashMap::new();
     for ((svc, route), wt) in weights {
         *per_service.entry(svc).or_default().entry(route).or_default() += wt;
@@ -79,6 +87,7 @@ pub fn attribute(
 
     let mut route_watts: HashMap<String, f64> = HashMap::new();
     let mut claimed: Vec<(String, String)> = Vec::new();
+    let mut services: HashMap<String, (usize, f64)> = HashMap::new();
     let mut unresolved = 0;
 
     for (svc, routes) in &per_service {
@@ -98,11 +107,15 @@ pub fn attribute(
         for (route, wt) in routes {
             *route_watts.entry((*route).to_string()).or_default() += svc_watts * wt / total;
         }
+        services.insert((*svc).to_string(), (pods.len(), total));
     }
 
-    let unattributed: f64 =
-        pod_watts.iter().filter(|(k, _)| !claimed.contains(k)).map(|(_, w)| *w).sum();
-    *route_watts.entry("_unattributed".into()).or_default() += unattributed;
+    let unattributed: HashMap<(String, String), f64> = pod_watts
+        .iter()
+        .filter(|(k, _)| !claimed.contains(k))
+        .map(|(k, w)| (k.clone(), *w))
+        .collect();
+    *route_watts.entry("_unattributed".into()).or_default() += unattributed.values().sum::<f64>();
 
-    (route_watts, unresolved)
+    Attribution { route_watts, unattributed, services, unresolved }
 }

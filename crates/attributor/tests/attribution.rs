@@ -53,11 +53,11 @@ fn root_route_propagates() {
 #[test]
 fn attribution_conserves_power() {
     let watts = sample_watts();
-    let (route_watts, unresolved) = attribute(&weights(&parse(&otlp(), "http.route")), &watts);
-    assert_eq!(unresolved, 0);
-    assert!((route_watts["/checkout"] - 6.0).abs() < 1e-9);
-    assert!((route_watts["_unattributed"] - 1.0).abs() < 1e-9);
-    let total: f64 = route_watts.values().sum();
+    let a = attribute(&weights(&parse(&otlp(), "http.route")), &watts);
+    assert_eq!(a.unresolved, 0);
+    assert!((a.route_watts["/checkout"] - 6.0).abs() < 1e-9);
+    assert!((a.route_watts["_unattributed"] - 1.0).abs() < 1e-9);
+    let total: f64 = a.route_watts.values().sum();
     let expected: f64 = watts.values().sum();
     assert!((total - expected).abs() < 1e-9);
 }
@@ -67,7 +67,28 @@ fn unmatched_service_counts_unresolved() {
     let watts = sample_watts();
     let mut w = HashMap::new();
     w.insert(("ghost".to_string(), "/x".to_string()), 1.0);
-    let (route_watts, unresolved) = attribute(&w, &watts);
-    assert_eq!(unresolved, 1);
-    assert!((route_watts["_unattributed"] - 7.0).abs() < 1e-9);
+    let a = attribute(&w, &watts);
+    assert_eq!(a.unresolved, 1);
+    assert!((a.route_watts["_unattributed"] - 7.0).abs() < 1e-9);
+}
+
+#[test]
+fn unattributed_detail_sums_to_bucket() {
+    let a = attribute(&weights(&parse(&otlp(), "http.route")), &sample_watts());
+    let detail: f64 = a.unattributed.values().sum();
+    assert!((detail - a.route_watts["_unattributed"]).abs() < 1e-9);
+    // the one unclaimed pod is identified, claimed ones are not listed
+    assert!(a.unattributed.contains_key(&("kube-system".into(), "coredns-xyz".into())));
+    assert_eq!(a.unattributed.len(), 1);
+}
+
+#[test]
+fn services_report_claimed_pods_and_busy_seconds() {
+    let a = attribute(&weights(&parse(&otlp(), "http.route")), &sample_watts());
+    let (pods, busy) = a.services["app-gateway"];
+    assert_eq!(pods, 1);
+    assert!((busy - 0.4).abs() < 1e-9);
+    let (pods, busy) = a.services["app-compute"];
+    assert_eq!(pods, 1);
+    assert!((busy - 0.1).abs() < 1e-9);
 }

@@ -11,6 +11,10 @@ use attributor::{attribute, parse, weights, Span};
 struct Metrics {
     energy: HashMap<String, f64>,
     power: HashMap<String, f64>,
+    // (namespace, pod) -> watts nobody claimed this tick, the detail behind _unattributed
+    unattributed: HashMap<(String, String), f64>,
+    // busy trace seconds per pod-second of wall clock; >1 means parallel spans
+    coverage: HashMap<String, f64>,
     unresolved: usize,
 }
 
@@ -60,6 +64,23 @@ fn render(m: &Metrics, timestamp: u64) -> String {
             w
         ));
     }
+    out.push_str("# TYPE wattopus_unattributed_pod_watts gauge\n");
+    for ((ns, pod), w) in &m.unattributed {
+        out.push_str(&format!(
+            "wattopus_unattributed_pod_watts{{namespace=\"{}\",pod=\"{}\"}} {}\n",
+            escape(ns),
+            escape(pod),
+            w
+        ));
+    }
+    out.push_str("# TYPE wattopus_service_trace_coverage gauge\n");
+    for (svc, c) in &m.coverage {
+        out.push_str(&format!(
+            "wattopus_service_trace_coverage{{service=\"{}\"}} {}\n",
+            escape(svc),
+            c
+        ));
+    }
     out.push_str("# TYPE wattopus_unresolved_services gauge\n");
     out.push_str(&format!("wattopus_unresolved_services {}\n", m.unresolved));
     out.push_str("# TYPE wattopus_last_tick_timestamp_seconds gauge\n");
@@ -84,6 +105,8 @@ fn main() {
     let metrics = Arc::new(Mutex::new(Metrics {
         energy: HashMap::new(),
         power: HashMap::new(),
+        unattributed: HashMap::new(),
+        coverage: HashMap::new(),
         unresolved: 0,
     }));
 
@@ -150,14 +173,20 @@ fn main() {
         last = Instant::now();
 
         let batch: Vec<Span> = std::mem::take(&mut *spans.lock().unwrap());
-        let (route_watts, unresolved) = attribute(&weights(&batch), &pod_watts(&prom_url, &power_query));
+        let a = attribute(&weights(&batch), &pod_watts(&prom_url, &power_query));
 
         let mut m = metrics.lock().unwrap();
         m.power.clear();
-        for (route, w) in &route_watts {
+        for (route, w) in &a.route_watts {
             *m.energy.entry(route.clone()).or_default() += w * elapsed;
             m.power.insert(route.clone(), *w);
         }
-        m.unresolved = unresolved;
+        m.unattributed = a.unattributed;
+        m.coverage = a
+            .services
+            .iter()
+            .map(|(svc, (pods, busy))| (svc.clone(), busy / (elapsed * *pods as f64)))
+            .collect();
+        m.unresolved = a.unresolved;
     }
 }
