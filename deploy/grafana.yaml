@@ -147,6 +147,56 @@ data:
               ]
             }
           ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "unattributed power by pod (top 10)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 1, "fillOpacity": 25, "stacking": { "mode": "normal" } }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "topk(10, wattopus_unattributed_pod_watts)",
+              "legendFormat": "{{namespace}}/{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "trace coverage by service (busy s per pod-s)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": { "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "wattopus_service_trace_coverage",
+              "legendFormat": "{{service}}"
+            }
+          ]
         }
       ]
     }
