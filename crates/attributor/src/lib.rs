@@ -69,9 +69,8 @@ pub fn weights(spans: &[Span]) -> HashMap<(String, String), f64> {
 
 pub struct Attribution {
     pub route_watts: HashMap<String, f64>,
-    /// unclaimed (namespace, pod) -> watts; sums to route_watts["_unattributed"]
+    pub service_route_watts: HashMap<(String, String), f64>,
     pub unattributed: HashMap<(String, String), f64>,
-    /// traced service -> (claimed pods, busy seconds); busy/(interval*pods) = coverage
     pub services: HashMap<String, (usize, f64)>,
     pub unresolved: usize,
 }
@@ -86,6 +85,7 @@ pub fn attribute(
     }
 
     let mut route_watts: HashMap<String, f64> = HashMap::new();
+    let mut service_route_watts: HashMap<(String, String), f64> = HashMap::new();
     let mut claimed: Vec<(String, String)> = Vec::new();
     let mut services: HashMap<String, (usize, f64)> = HashMap::new();
     let mut unresolved = 0;
@@ -105,7 +105,11 @@ pub fn attribute(
         }
         let total: f64 = routes.values().sum();
         for (route, wt) in routes {
-            *route_watts.entry((*route).to_string()).or_default() += svc_watts * wt / total;
+            let w = svc_watts * wt / total;
+            *route_watts.entry((*route).to_string()).or_default() += w;
+            *service_route_watts
+                .entry(((*svc).to_string(), (*route).to_string()))
+                .or_default() += w;
         }
         services.insert((*svc).to_string(), (pods.len(), total));
     }
@@ -117,5 +121,5 @@ pub fn attribute(
         .collect();
     *route_watts.entry("_unattributed".into()).or_default() += unattributed.values().sum::<f64>();
 
-    Attribution { route_watts, unattributed, services, unresolved }
+    Attribution { route_watts, service_route_watts, unattributed, services, unresolved }
 }
