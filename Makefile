@@ -1,4 +1,4 @@
-REGISTRY ?= wattopus
+REGISTRY ?= inkedstinct
 TAG ?= 0.1
 BINS = app attributor feeder operator mockpower predictor
 
@@ -7,6 +7,7 @@ build:
 	  docker build --build-arg BIN=$$b -t $(REGISTRY)/$$b:$(TAG) . || exit 1; \
 	done
 	docker build -t $(REGISTRY)/greycat-twin:$(TAG) greycat
+	docker build -t $(REGISTRY)/kubediagram:$(TAG) deploy/kubediagram
 
 deploy-base:
 	kubectl apply -f deploy/

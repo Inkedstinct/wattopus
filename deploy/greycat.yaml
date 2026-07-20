@@ -15,7 +15,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: greycat
-          image: inkedstinct/greycat-twin:0.3
+          image: inkedstinct/greycat-twin:0.1
           imagePullPolicy: IfNotPresent
           ports: [{ containerPort: 8080 }]
           volumeMounts:
