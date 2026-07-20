@@ -1,0 +1,17 @@
+# Local single-node cluster for iterating on Wattopus without Grid'5000.
+# The real target (kube5k) is kubeadm vanilla k8s; kind is the same bootstrap
+# family (kubeadm + containerd), so the base manifests apply unchanged.
+# Node image pinned by digest for reproducibility; v1.33.12 tracks kube5k's
+# 1.33 line. Bump both together. `make kind-up` consumes this file.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: wattopus
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.12@sha256:3f5c8443c620245e4d355cfe09e96a91ead32ceaa569d3f1ca9edf0cb2fe2ff4
+    # map the NodePorts the manifests already expose to localhost, so
+    # http://localhost:3<nnn> reaches each service with no port-forward.
+    extraPortMappings:
+      - { containerPort: 30300, hostPort: 30300, protocol: TCP }  # grafana
+      - { containerPort: 30900, hostPort: 30900, protocol: TCP }  # prometheus
+      - { containerPort: 30808, hostPort: 30808, protocol: TCP }  # greycat
