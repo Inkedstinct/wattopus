@@ -5,5 +5,11 @@
 @include("server");
 
 fn main() {
-    println("wattopus twin ready, POST /twin::ingest");
+    // serve runs main as a startup task
+    // retention prunes the ever-growing series;
+    // native Backup snapshots the store to --backup_path 
+    // TODO: Check size and growth rate to update default retention/backup values
+    Scheduler::add(twin::run_retention, FixedPeriodicity { every: 30min }, null);
+    Scheduler::add(runtime::Runtime::backup_full, DailyPeriodicity {}, null);
+    println("wattopus twin ready, POST /twin::ingest (retention 30min, backup daily)");
 }
