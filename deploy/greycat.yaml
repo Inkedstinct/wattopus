@@ -1,10 +1,12 @@
+
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: greycat
   namespace: wattopus
   labels: { app: greycat }
 spec:
+  serviceName: greycat
   replicas: 1
   selector:
     matchLabels: { app: greycat }
@@ -19,10 +21,14 @@ spec:
           imagePullPolicy: IfNotPresent
           ports: [{ containerPort: 8080 }]
           volumeMounts:
-            - { name: data, mountPath: /app/gcdata }
-      volumes:
-        - name: data
-          emptyDir: {}
+            - { name: data, mountPath: /app/gcdata, subPath: gcdata } 
+            - { name: data, mountPath: /app/backup, subPath: backup }  # Backup snapshots
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: { storage: 1Gi }
 ---
 apiVersion: v1
 kind: Service

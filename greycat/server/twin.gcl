@@ -557,3 +557,45 @@ fn graph_edges(): Array<GraphEdge> {
     }
     return out;
 }
+
+// durability/history is GreyCat's native Backup
+// (runtime::Runtime::backup_full), scheduled next to this in main(). no-arg so
+// the scheduler can call it; also @expose for on-demand runs.
+
+// firstTime is the smallest, we stop at the first sample newer than cutoff.
+private fn prune_series(series: nodeTime<Res>, cutoff_sec: int): int {
+    var pruned = 0;
+    var t = series.firstTime();
+    while (t != null) {
+        if (t.to(DurationUnit::seconds) >= cutoff_sec) {
+            break;
+        }
+        var nxt = series.next(t);
+        series.removeAt(t);
+        pruned = pruned + 1;
+        t = nxt;
+    }
+    return pruned;
+}
+
+@expose
+fn run_retention(): int {
+    var cutoff_sec = time::now().to(DurationUnit::seconds) - 7 * 24 * 3600; // keep 7d live
+    var pruned = 0;
+    for (_, kn in knodes) {
+        pruned = pruned + prune_series(kn->metrics, cutoff_sec);
+    }
+    for (_, ns in namespaces) {
+        pruned = pruned + prune_series(ns->metrics, cutoff_sec);
+        for (_, d in ns->deployments) {
+            pruned = pruned + prune_series(d->metrics, cutoff_sec);
+        }
+        for (_, p in ns->pods) {
+            pruned = pruned + prune_series(p->metrics, cutoff_sec);
+            for (_, c in p->containers) {
+                pruned = pruned + prune_series(c->metrics, cutoff_sec);
+            }
+        }
+    }
+    return pruned;
+}
