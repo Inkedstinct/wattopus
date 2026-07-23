@@ -1,0 +1,6 @@
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "28282"
+config:
+  log:
+    level: info  # chart default is d ebug
