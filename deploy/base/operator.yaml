@@ -43,7 +43,7 @@ spec:
       serviceAccountName: operator
       containers:
         - name: operator
-          image: inkedstinct/operator:0.1
+          image: inkedstinct/operator:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - { name: GREYCAT_URL, value: http://greycat:8080 }

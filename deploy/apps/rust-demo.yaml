@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: inkedstinct/app:0.1
+          image: inkedstinct/app:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - { name: ROLE, value: gateway }
@@ -47,7 +47,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: inkedstinct/app:0.1
+          image: inkedstinct/app:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - { name: ROLE, value: compute }
@@ -80,7 +80,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: inkedstinct/app:0.1
+          image: inkedstinct/app:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - { name: ROLE, value: store }

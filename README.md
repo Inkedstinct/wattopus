@@ -1,87 +1,83 @@
-# Wattopus POC (Rust)
+# Wattopus
 
-Modular proof of concept: measure the energy of a Kubernetes application per
-**traced request path**, mirror the cluster into a **GreyCat digital twin**,
-and change the cluster **through the twin**: simulate first, apply only if
-requirements hold.
+Energy attribution for Kubernetes, per **traced request path**, driven through a **digital twin**. A research proof of concept: every component is Rust, the twin is [GreyCat](https://greycat.io), everything else (Prometheus, Tempo, Grafana,  OpenTelemetry Collector) is storage or transport.
 
-Every component we own is Rust. GreyCat (the twin database), Prometheus,
-Grafana, Tempo and the OpenTelemetry Collector stay as-is: they are storage
-and transport, not our logic.
+## Introduction
+
+Wattopus answers two questions a Kubernetes cluster cannot answer today:
+
+1. **Who consumes the watts?** Not per node, not per pod — per *business request path* (`/checkout`, `/report`, …), across every service a request traverses.
+2. **What would this change cost before I apply it?** Scaling decisions go through a live digital twin of the cluster: simulate, check the requirement, then apply — or roll back without touching production.
+
+It runs on a laptop (kind, deterministic mock meter) or on real hardware (Grid'5000, real watts via RAPL).
+
+## Identified issue
+
+Kubernetes observability is resource-centric: CPU, memory, network per pod.
+Power meters, when present at all, stop one level too high: a wattmeter or a BMC gives watts per *node*; software meters like Kepler give watts per *pod*. Nobody bills the *request*. Yet the request path is the unit that maps to business value — "what does a checkout cost in joules?" is the question behind energy-aware pricing, frugal scaling and carbon reporting.
+
+Two things make the naive answers wrong:
+
+- **Leakage.** Splitting node power by CPU share loses energy on the floor: shared services, idle draw, untraced traffic. A attribution that does not *conserve* power (Σ attributed == Σ measured) is an estimate you cannot audit.
+- **Blind actuation.** Even with good measurements, operators change clusters open-loop: scale up, watch dashboards, apologize. The energy consequence of a change is discovered after the fact.
+
+## Concept of solution
+
+**Attribution that conserves power.** Every pod's measured watts are distributed over the request routes that traversed it, weighted by trace-derived work. What no trace explains stays visible in an `_unattributed` bucket instead of disappearing. 
+**A twin in the loop.** A feeder posts the full cluster picture (nodes, namespaces, deployments, services, pods, containers — usage, availability, joules) to GreyCat every tick as temporal series. A predictor writes quiescence verdicts next to the data. The operator never scales the cluster directly: it asks the twin to *simulate* the change, checks the predicted metrics against the requirement, and only then touches the apiserver — otherwise it rolls the twin back and answers "no, because...". 
+**The meter is a module.** The only coupling between "where watts come from" and everything else is one PromQL query (`POWER_QUERY`) returning `(namespace, pod) -> watts`  
+```mermaid
+flowchart LR
+  demo[demo app<br>traced] -- OTLP --> otel[collector] --> tempo[Tempo]
+  otel -- OTLP --> attr[attributor]
+  meter[meter<br>mockpower / Kepler] -- pod watts --> prom[Prometheus]
+  prom -- POWER_QUERY --> attr
+  attr -- route watts --> prom
+  prom & k8s[apiserver] -- 30 s --> feeder --> twin[(GreyCat twin)]
+  operator -- simulate / commit / rollback --> twin
+  operator -- scale --> k8s
+  twin & prom & tempo --> grafana[Grafana]
+```
+
+## Cluster deployment (Grid'5000 / kube5k)
+
+Prerequisites: a kubeconfig for the cluster, `kubectl`, `helm`.
+Images are pulled from `docker.io/inkedstinct/*` at the tag pinned in the
+manifests.
+
+```sh
+export KUBECONFIG=$PWD/deploy/cluster/admin_kube5k.conf
+
+make deploy-storage           # install local-path-provisioner 
+kubectl apply -k deploy/g5k   # the stack, Kepler POWER_QUERY, no mockpower
+make deploy-kepler            # the meter: upstream OCI chart, RAPL DaemonSet
+make deploy-rust-demo         # demo workload + load generator
+make demo                     # (optionnal): fire /checkout /catalog /report once
+```
 
 
-## What any workload must provide
+Delete: `make undeploy-rust-demo undeploy-base undeploy-kepler` 
 
-The platform discovers everything else from the apiserver and cAdvisor. To
-get per-route attribution, an app has to follow three common OpenTelemetry
-conventions:
+## Local deployment (kind)
 
-1. emit OTLP traces with `service.name` equal to its Deployment name
-   (pods are matched by the `<service>-` name prefix);
-2. carry the route on the root span, in `http.route` (configurable via
-   `ROUTE_ATTR`) or as the span name;
-3. propagate W3C `traceparent` between services so a request is one trace.
+```sh
+make build-kind            # kind cluster from deploy/local/kind.yaml
+make build                 # all images, TAG from the Makefile
+TAG=0.2.0                  # match the Makefile / manifests
+for i in app attributor feeder operator mockpower predictor greycat-twin kubediagram; do
+  kind load docker-image inkedstinct/$i:$TAG -n wattopus
+done
+kubectl apply -k deploy/   # base profile: the stack + mockpower
+make deploy-rust-demo
+make demo
+```
 
-Apps that do none of this still show up in the twin, in the predictor and in
-`_unattributed` power. They only miss the per-route split.
 
+Dev loop without a cluster:
+```sh
+make test                  # cargo workspace tests, incl. the contract fixture
+cd greycat && greycat serve --user=1 &   # a live twin on :8080
+make contract              # fire the golden fixture at it
+```
 
-## Quickstart
-
-Needs: a cluster (kubectl configured), docker, images loadable by the cluster
-nodes (push to a registry and set `REGISTRY=`, or `kind load` `ctr images import` the local ones).
-
-- the "Wattopus Twin" dashboard: the twin graph as a node-graph panel
-  (joules per node, replicas, quiescence) + route power over time
-- traces: Explore / Tempo, search service `app-gateway`
-- energy per path: `rate(wattopus_route_energy_joules_total[5m])` by `route`
-- raw power: `mockpower_pod_watts`
-
-The twin itself is browsable at `greycat:8080/explorer/` (GreyCat Explorer),
-and a live KubeDiagrams rendering of the namespace (re-rendered by the
-`kubediagram` deployment on shape changes) shows up in the same dashboard
-as a Business Media panel.
-
-## The twin
-
-The feeder posts, every 30 s, the full picture to GreyCat: nodes, namespaces,
-deployments (with replicas), services, pods, containers, each with
-cpu/ram/disk usage, availability, and joules as temporal series. The
-predictor reads the freshest sample per deployment back from the twin, keeps
-a sliding window, and writes a `Prediction` (forecast + quiescence verdict)
-next to the metrics. Scale decisions read from and are staged in the same
-graph.
-
-## Simulate, then apply
-
-The operator asks the twin to stage the change (`twin::simulate_scale`
-mutates `staged_replicas` and predicts per-pod CPU and joules). If predicted
-CPU per pod stays under `CPU_LIMIT_PER_POD` (0.8 <- Magic number !), the operator scales the
-real deployment via the apiserver and commits the twin. Otherwise it answers
-`applied: false` with the reason and rolls the twin back. The operator is
-itself traced, so the decision shows up in Tempo.
-
-# Test
-
-## The twin contract
-
-Everything that crosses into or out of GreyCat is pinned three ways:
-
-- `crates/ingest` holds the typed Rust structs (`Snapshot` and `Prediction`
-  in, `ScaleSimulation` and `LatestSample` out); feeder, operator and
-  predictor can only speak those shapes, the compiler enforces the producer
-  side.
-- `schema/ingest.sample.json` is the golden "fixture": the cross-language
-  contract as one file. A unit test is set to make it noisy on fails. 
-- `schema/check-twin.sh` fires the same fixture at a live GreyCat and
-  exercises simulation, prediction and the graph export
-
-## Next
-
-- mockpower is a linear CPU model, check KubeWatt
-- availability metrics are computed at node level only 
-- the what-if is linear: joules scale with replicas, CPU work is conserved, we'll use LSTM I guess
-- the prediction is a mock: mean/sigma quiescence + persistence forecast
-- service-to-pod resolution is a quite fragile
-- store keeps items in memory per replica; scaling changes what `/catalog` sees. Check volumes mounting
-- all storage is emptyDir: history dies with pods 
+Delete: `make delete-kind`.

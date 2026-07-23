@@ -1,5 +1,5 @@
 REGISTRY ?= inkedstinct
-TAG ?= 0.1
+TAG ?= 0.2.0
 LOCAL_PATH_VERSION ?= v0.0.31
 KEPLER_CHART ?= oci://quay.io/sustainable_computing_io/charts/kepler
 KEPLER_CHART_VERSION ?= 0.11.4
@@ -14,7 +14,7 @@ build:
 
 set-version:
 	sed -i 's/^TAG ?= .*/TAG ?= $(VERSION)/' Makefile
-	grep -rl 'inkedstinct/.*:' deploy/ | xargs sed -i -E 's#(inkedstinct/[a-z-]+):[0-9][0-9A-Za-z.-]*#\1:$(VERSION)#g'
+	grep -rl --include='*.yaml' 'inkedstinct/.*:' deploy/ | xargs sed -i -E 's#(inkedstinct/[a-z-]+):[0-9][0-9A-Za-z.-]*#\1:$(VERSION)#g'
 
 
 deploy-base:

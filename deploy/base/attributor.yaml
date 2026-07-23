@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: attributor
-          image: inkedstinct/attributor:0.1
+          image: inkedstinct/attributor:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - { name: PROM_URL, value: http://prometheus:9090 }

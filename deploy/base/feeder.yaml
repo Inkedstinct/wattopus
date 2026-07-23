@@ -46,7 +46,7 @@ spec:
       serviceAccountName: feeder
       containers:
         - name: feeder
-          image: inkedstinct/feeder:0.1
+          image: inkedstinct/feeder:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - { name: PROM_URL, value: http://prometheus:9090 }
