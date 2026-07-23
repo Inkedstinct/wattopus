@@ -1,6 +1,8 @@
 REGISTRY ?= inkedstinct
 TAG ?= 0.1
 LOCAL_PATH_VERSION ?= v0.0.31
+KEPLER_CHART ?= oci://quay.io/sustainable_computing_io/charts/kepler
+KEPLER_CHART_VERSION ?= 0.11.4
 BINS = app attributor feeder operator mockpower predictor
 
 build:
@@ -16,15 +18,23 @@ set-version:
 
 
 deploy-base:
-	kubectl apply -f deploy/
+	kubectl apply -k deploy/
 
 undeploy-base:
-	kubectl delete -f deploy/ --ignore-not-found
+	kubectl delete -k deploy/ --ignore-not-found
 
 deploy-storage:
 	kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/$(LOCAL_PATH_VERSION)/deploy/local-path-storage.yaml
 	kubectl -n local-path-storage rollout status deploy/local-path-provisioner
 	kubectl patch storageclass local-path -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+
+deploy-kepler:
+	helm upgrade --install kepler $(KEPLER_CHART) --version $(KEPLER_CHART_VERSION) \
+	  -n kepler --create-namespace -f deploy/kepler-values.yaml
+
+undeploy-kepler:
+	helm uninstall kepler -n kepler
 
 deploy-rust-demo:
 	kubectl apply -f deploy/apps/rust-demo.yaml -f deploy/apps/rust-demo-load.yaml

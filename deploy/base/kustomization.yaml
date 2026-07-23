@@ -1,0 +1,16 @@
+# base profile: local/kind, mockpower as meter. G5K overlay in ../g5k/.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-namespace.yaml
+  - attributor.yaml
+  - feeder.yaml
+  - grafana.yaml
+  - greycat.yaml
+  - kubediagram.yaml
+  - operator.yaml
+  - otel-collector.yaml
+  - power-mock.yaml
+  - predictor.yaml
+  - prometheus.yaml
+  - tempo.yaml
