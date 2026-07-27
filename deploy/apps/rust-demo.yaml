@@ -10,7 +10,7 @@ spec:
     matchLabels: { app: app-gateway }
   template:
     metadata:
-      labels: { app: app-gateway }
+      labels: { app: app-gateway, app.kubernetes.io/part-of: application }
     spec:
       containers:
         - name: app
@@ -43,7 +43,7 @@ spec:
     matchLabels: { app: app-compute }
   template:
     metadata:
-      labels: { app: app-compute }
+      labels: { app: app-compute, app.kubernetes.io/part-of: application }
     spec:
       containers:
         - name: app
@@ -76,7 +76,7 @@ spec:
     matchLabels: { app: app-store }
   template:
     metadata:
-      labels: { app: app-store }
+      labels: { app: app-store, app.kubernetes.io/part-of: application }
     spec:
       containers:
         - name: app

@@ -78,6 +78,7 @@ pub struct Attribution {
 pub fn attribute(
     weights: &HashMap<(String, String), f64>,
     pod_watts: &HashMap<(String, String), f64>,
+    categories: &HashMap<(String, String), String>,
 ) -> Attribution {
     let mut per_service: HashMap<&str, HashMap<&str, f64>> = HashMap::new();
     for ((svc, route), wt) in weights {
@@ -114,12 +115,38 @@ pub fn attribute(
         services.insert((*svc).to_string(), (pods.len(), total));
     }
 
-    let unattributed: HashMap<(String, String), f64> = pod_watts
-        .iter()
-        .filter(|(k, _)| !claimed.contains(k))
-        .map(|(k, w)| (k.clone(), *w))
-        .collect();
+    let mut unattributed: HashMap<(String, String), f64> = HashMap::new();
+    for (k, w) in pod_watts {
+        if claimed.contains(k) {
+            continue;
+        }
+        match categories.get(k) {
+            Some(cat) => *route_watts.entry(format!("_{cat}")).or_default() += *w,
+            None => {
+                unattributed.insert(k.clone(), *w);
+            }
+        }
+    }
     *route_watts.entry("_unattributed".into()).or_default() += unattributed.values().sum::<f64>();
 
     Attribution { route_watts, service_route_watts, unattributed, services, unresolved }
+}
+
+/// category axis: every measured pod tagged with its part-of bucket.
+/// separate from route billing on purpose: folding categories into routes
+/// for traced pods would double-bill and break conservation.
+pub fn category_watts(
+    pod_watts: &HashMap<(String, String), f64>,
+    categories: &HashMap<(String, String), String>,
+) -> HashMap<(String, String), (String, f64)> {
+    pod_watts
+        .iter()
+        .map(|(k, w)| {
+            let bucket = match categories.get(k) {
+                Some(c) => format!("_{c}"),
+                None => "_unlabeled".into(),
+            };
+            (k.clone(), (bucket, *w))
+        })
+        .collect()
 }

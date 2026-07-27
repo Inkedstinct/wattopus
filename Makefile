@@ -52,6 +52,10 @@ undeploy-otel-demo:
 test:
 	cargo test --workspace
 
+lint:
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets -- -D warnings
+
 contract:
 	schema/check-twin.sh $${GREYCAT_URL:-http://localhost:8080}
 
@@ -82,3 +86,8 @@ build-kind:
 
 delete-kind:
 	kind delete cluster -n wattopus
+
+clean:
+	cargo clean
+	rm -rf greycat/bin greycat/lib greycat/gcdata greycat/backup \
+	  greycat/webroot greycat/files greycat/project.gcp files

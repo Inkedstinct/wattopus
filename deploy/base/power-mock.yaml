@@ -11,7 +11,7 @@ spec:
     matchLabels: { app: mockpower }
   template:
     metadata:
-      labels: { app: mockpower }
+      labels: { app: mockpower, app.kubernetes.io/part-of: wattopus }
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9105"

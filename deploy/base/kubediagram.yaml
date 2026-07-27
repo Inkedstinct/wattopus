@@ -44,7 +44,7 @@ spec:
     matchLabels: { app: kubediagram }
   template:
     metadata:
-      labels: { app: kubediagram }
+      labels: { app: kubediagram, app.kubernetes.io/part-of: wattopus }
     spec:
       serviceAccountName: kubediagram
       containers:

@@ -23,7 +23,7 @@ Two things make the naive answers wrong:
 
 ## Concept of solution
 
-**Attribution that conserves power.** Every pod's measured watts are distributed over the request routes that traversed it, weighted by trace-derived work. What no trace explains stays visible in an `_unattributed` bucket instead of disappearing. 
+**Attribution that conserves power.** Every pod's measured watts are distributed over the request routes that traversed it, weighted by trace-derived work. What no trace explains stays visible in an `_unattributed` bucket instead of disappearing. Platform pods carry `app.kubernetes.io/part-of` labels. If no trace explains it, it bill themselves to named buckets (`_observability`, `_wattopus`) instead of polluting `_unattributed`.
 **A twin in the loop.** A feeder posts the full cluster picture (nodes, namespaces, deployments, services, pods, containers — usage, availability, joules) to GreyCat every tick as temporal series. A predictor writes quiescence verdicts next to the data. The operator never scales the cluster directly: it asks the twin to *simulate* the change, checks the predicted metrics against the requirement, and only then touches the apiserver — otherwise it rolls the twin back and answers "no, because...". 
 **The meter is a module.** The only coupling between "where watts come from" and everything else is one PromQL query (`POWER_QUERY`) returning `(namespace, pod) -> watts`  
 ```mermaid

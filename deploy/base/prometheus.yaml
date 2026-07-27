@@ -85,7 +85,7 @@ spec:
     matchLabels: { app: prometheus }
   template:
     metadata:
-      labels: { app: prometheus }
+      labels: { app: prometheus, app.kubernetes.io/part-of: observability }
     spec:
       serviceAccountName: prometheus
       containers:

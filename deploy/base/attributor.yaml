@@ -1,3 +1,31 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: attributor
+  namespace: wattopus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: wattopus-attributor
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: wattopus-attributor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: wattopus-attributor
+subjects:
+  - kind: ServiceAccount
+    name: attributor
+    namespace: wattopus
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,11 +38,12 @@ spec:
     matchLabels: { app: attributor }
   template:
     metadata:
-      labels: { app: attributor }
+      labels: { app: attributor, app.kubernetes.io/part-of: wattopus }
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9500"
     spec:
+      serviceAccountName: attributor
       containers:
         - name: attributor
           image: inkedstinct/attributor:0.2.0

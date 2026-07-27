@@ -41,7 +41,7 @@ spec:
     matchLabels: { app: feeder }
   template:
     metadata:
-      labels: { app: feeder }
+      labels: { app: feeder, app.kubernetes.io/part-of: wattopus }
     spec:
       serviceAccountName: feeder
       containers:

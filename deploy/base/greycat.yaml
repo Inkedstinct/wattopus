@@ -12,7 +12,7 @@ spec:
     matchLabels: { app: greycat }
   template:
     metadata:
-      labels: { app: greycat }
+      labels: { app: greycat, app.kubernetes.io/part-of: wattopus }
     spec:
       enableServiceLinks: false
       containers:
