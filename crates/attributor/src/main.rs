@@ -6,13 +6,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tiny_http::{Header, Response, Server};
 
-use attributor::{attribute, parse, weights, Span};
+use attributor::{attribute, category_watts, parse, weights, Span};
 
 struct Metrics {
     energy: HashMap<String, f64>,
     power: HashMap<String, f64>,
     service_route: HashMap<(String, String), f64>,
     unattributed: HashMap<(String, String), f64>,
+    pod_category: HashMap<(String, String), (String, f64)>,
     coverage: HashMap<String, f64>,
     unresolved: usize,
 }
@@ -22,7 +23,10 @@ fn env_str(key: &str, default: &str) -> String {
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn pod_watts(prom_url: &str, query: &str) -> HashMap<(String, String), f64> {
@@ -43,6 +47,27 @@ fn pod_watts(prom_url: &str, query: &str) -> HashMap<(String, String), f64> {
         }
     }
     out
+}
+
+fn categories(cli: Option<&k8s::Client>) -> HashMap<(String, String), String> {
+    let Some(cli) = cli else {
+        return HashMap::new();
+    };
+    match cli.list("/api/v1", "pods") {
+        Ok(pods) => pods
+            .iter()
+            .filter_map(|p| {
+                let ns = p["metadata"]["namespace"].as_str()?;
+                let name = p["metadata"]["name"].as_str()?;
+                let cat = p["metadata"]["labels"]["app.kubernetes.io/part-of"].as_str()?;
+                Some(((ns.to_string(), name.to_string()), cat.to_string()))
+            })
+            .collect(),
+        Err(e) => {
+            log::warn!("pod labels: {e}");
+            HashMap::new()
+        }
+    }
 }
 
 fn render(m: &Metrics, timestamp: u64) -> String {
@@ -81,6 +106,16 @@ fn render(m: &Metrics, timestamp: u64) -> String {
             w
         ));
     }
+    out.push_str("# TYPE wattopus_pod_watts gauge\n");
+    for ((ns, pod), (cat, w)) in &m.pod_category {
+        out.push_str(&format!(
+            "wattopus_pod_watts{{namespace=\"{}\",pod=\"{}\",category=\"{}\"}} {}\n",
+            escape(ns),
+            escape(pod),
+            escape(cat),
+            w
+        ));
+    }
     out.push_str("# TYPE wattopus_service_trace_coverage gauge\n");
     for (svc, c) in &m.coverage {
         out.push_str(&format!(
@@ -92,7 +127,9 @@ fn render(m: &Metrics, timestamp: u64) -> String {
     out.push_str("# TYPE wattopus_unresolved_services gauge\n");
     out.push_str(&format!("wattopus_unresolved_services {}\n", m.unresolved));
     out.push_str("# TYPE wattopus_last_tick_timestamp_seconds gauge\n");
-    out.push_str(&format!("wattopus_last_tick_timestamp_seconds {timestamp}\n"));
+    out.push_str(&format!(
+        "wattopus_last_tick_timestamp_seconds {timestamp}\n"
+    ));
     out
 }
 
@@ -104,8 +141,10 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let prom_url = env_str("PROM_URL", "http://prometheus:9090");
-    let power_query =
-        env_str("POWER_QUERY", "sum by (namespace, pod) (mockpower_pod_watts)");
+    let power_query = env_str(
+        "POWER_QUERY",
+        "sum by (namespace, pod) (mockpower_pod_watts)",
+    );
     let route_attr = env_str("ROUTE_ATTR", "http.route");
     let interval = env_f64("INTERVAL", 15.0);
 
@@ -115,11 +154,19 @@ fn main() {
         power: HashMap::new(),
         service_route: HashMap::new(),
         unattributed: HashMap::new(),
+        pod_category: HashMap::new(),
         coverage: HashMap::new(),
         unresolved: 0,
     }));
 
-    
+    let cli = match k8s::Client::in_cluster() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            log::warn!("no apiserver, categories disabled: {e}");
+            None
+        }
+    };
+
     {
         let spans = spans.clone();
         let route_attr = route_attr.clone();
@@ -143,7 +190,8 @@ fn main() {
                         let batch = parse(&v, &route_attr);
                         spans.lock().unwrap().extend(batch);
                         let header =
-                            Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+                            Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                                .unwrap();
                         let _ = req.respond(Response::from_string("{}").with_header(header));
                     }
                     Err(_) => {
@@ -160,7 +208,10 @@ fn main() {
         thread::spawn(move || {
             for req in server.incoming_requests() {
                 if req.url() == "/metrics" {
-                    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                    let ts = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
                     let body = render(&metrics.lock().unwrap(), ts);
                     let _ = req.respond(Response::from_string(body));
                 } else {
@@ -179,7 +230,9 @@ fn main() {
         last = Instant::now();
 
         let batch: Vec<Span> = std::mem::take(&mut *spans.lock().unwrap());
-        let a = attribute(&weights(&batch), &pod_watts(&prom_url, &power_query));
+        let cats = categories(cli.as_ref());
+        let watts = pod_watts(&prom_url, &power_query);
+        let a = attribute(&weights(&batch), &watts, &cats);
 
         let mut m = metrics.lock().unwrap();
         m.power.clear();
@@ -189,6 +242,7 @@ fn main() {
         }
         m.service_route = a.service_route_watts;
         m.unattributed = a.unattributed;
+        m.pod_category = category_watts(&watts, &cats);
         m.coverage = a
             .services
             .iter()

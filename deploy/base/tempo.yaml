@@ -33,7 +33,7 @@ spec:
     matchLabels: { app: tempo }
   template:
     metadata:
-      labels: { app: tempo }
+      labels: { app: tempo, app.kubernetes.io/part-of: observability }
     spec:
       containers:
         - name: tempo

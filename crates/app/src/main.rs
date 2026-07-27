@@ -24,7 +24,6 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-
 // Uses W3C traceparent https://www.w3.org/TR/trace-context/#traceparent-header
 // Check in OTLP crate
 fn traceparent(req: &Request) -> Option<String> {
@@ -38,7 +37,8 @@ fn get_json(url: &str, span: &Span) -> Value {
     ureq::get(url)
         .set("traceparent", &span.traceparent())
         .call()
-        .and_then(|r| Ok(r.into_json::<Value>()?))
+        .ok()
+        .and_then(|r| r.into_json::<Value>().ok())
         .unwrap_or(Value::Null)
 }
 
@@ -136,4 +136,3 @@ fn main() {
         }
     }
 }
-

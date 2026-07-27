@@ -8,15 +8,20 @@ use ingest::{Container, Deployment, Namespace, Node, Pod, Res, Service, Snapshot
 use k8s::Client;
 
 const CPU_Q: &str = "sum by (namespace, pod, container) (rate(container_cpu_usage_seconds_total{container!=\"\"}[2m]))";
-const RAM_Q: &str = "sum by (namespace, pod, container) (container_memory_working_set_bytes{container!=\"\"})";
-const DISK_Q: &str = "sum by (namespace, pod, container) (container_fs_usage_bytes{container!=\"\"})";
+const RAM_Q: &str =
+    "sum by (namespace, pod, container) (container_memory_working_set_bytes{container!=\"\"})";
+const DISK_Q: &str =
+    "sum by (namespace, pod, container) (container_fs_usage_bytes{container!=\"\"})";
 
 fn env_str(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.into())
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn prom_by_container(prom_url: &str, query: &str) -> HashMap<(String, String, String), f64> {
@@ -83,7 +88,10 @@ fn quantity(s: &str) -> f64 {
 }
 
 fn deployment_of(pod: &Value) -> String {
-    for o in pod["metadata"]["ownerReferences"].as_array().unwrap_or(&vec![]) {
+    for o in pod["metadata"]["ownerReferences"]
+        .as_array()
+        .unwrap_or(&vec![])
+    {
         if o["kind"] == "ReplicaSet" {
             let rs = o["name"].as_str().unwrap_or("");
             if let Some(idx) = rs.rfind('-') {
@@ -94,7 +102,12 @@ fn deployment_of(pod: &Value) -> String {
     String::new()
 }
 
-fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Result<Snapshot, String> {
+fn snapshot(
+    cli: &Client,
+    prom_url: &str,
+    power_query: &str,
+    elapsed: f64,
+) -> Result<Snapshot, String> {
     let cpu = prom_by_container(prom_url, CPU_Q);
     let ram = prom_by_container(prom_url, RAM_Q);
     let disk = prom_by_container(prom_url, DISK_Q);
@@ -113,12 +126,19 @@ fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Re
     let mut ns_res: HashMap<String, Res> = HashMap::new();
 
     for p in &pod_list {
-        let ns = p["metadata"]["namespace"].as_str().unwrap_or("").to_string();
+        let ns = p["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let name = p["metadata"]["name"].as_str().unwrap_or("").to_string();
         let node = p["spec"]["nodeName"].as_str().unwrap_or("").to_string();
         let deployment = deployment_of(p);
         let mut total = Res {
-            joules: watts.get(&(ns.clone(), name.clone())).copied().unwrap_or(0.0) * elapsed,
+            joules: watts
+                .get(&(ns.clone(), name.clone()))
+                .copied()
+                .unwrap_or(0.0)
+                * elapsed,
             ..Default::default()
         };
         for c in p["spec"]["containers"].as_array().unwrap_or(&vec![]) {
@@ -136,7 +156,7 @@ fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Re
                 name: cname,
                 metrics: m,
             });
-            total = total.add(m);
+            total = total.addition(m);
         }
         pod_res.insert((ns.clone(), name.clone()), total);
         pod_node.insert((ns.clone(), name.clone()), node.clone());
@@ -149,10 +169,10 @@ fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Re
         });
         if !deployment.is_empty() {
             let e = deploy_res.entry((ns.clone(), deployment)).or_default();
-            *e = e.add(total);
+            *e = e.addition(total);
         }
         let e = ns_res.entry(ns).or_default();
-        *e = e.add(total);
+        *e = e.addition(total);
     }
 
     let mut nodes = Vec::new();
@@ -161,7 +181,7 @@ fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Re
         let mut usage = Res::default();
         for ((ns, pod), m) in &pod_res {
             if pod_node.get(&(ns.clone(), pod.clone())) == Some(&nname) {
-                usage = usage.add(*m);
+                usage = usage.addition(*m);
             }
         }
         let alloc = &n["status"]["allocatable"];
@@ -169,15 +189,24 @@ fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Re
         usage.ram_available = quantity(alloc["memory"].as_str().unwrap_or("0")) - usage.ram_usage;
         usage.disk_available =
             quantity(alloc["ephemeral-storage"].as_str().unwrap_or("0")) - usage.disk_usage;
-        nodes.push(Node { name: nname, metrics: usage });
+        nodes.push(Node {
+            name: nname,
+            metrics: usage,
+        });
     }
 
     let deployments: Vec<Deployment> = deploy_list
         .iter()
         .map(|d| {
-            let ns = d["metadata"]["namespace"].as_str().unwrap_or("").to_string();
+            let ns = d["metadata"]["namespace"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
             let name = d["metadata"]["name"].as_str().unwrap_or("").to_string();
-            let metrics = deploy_res.get(&(ns.clone(), name.clone())).copied().unwrap_or_default();
+            let metrics = deploy_res
+                .get(&(ns.clone(), name.clone()))
+                .copied()
+                .unwrap_or_default();
             Deployment {
                 namespace: ns,
                 name,
@@ -190,17 +219,36 @@ fn snapshot(cli: &Client, prom_url: &str, power_query: &str, elapsed: f64) -> Re
     let services: Vec<Service> = svc_list
         .iter()
         .map(|s| Service {
-            namespace: s["metadata"]["namespace"].as_str().unwrap_or("").to_string(),
+            namespace: s["metadata"]["namespace"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             name: s["metadata"]["name"].as_str().unwrap_or("").to_string(),
-            deployment: s["spec"]["selector"]["app"].as_str().unwrap_or("").to_string(),
+            deployment: s["spec"]["selector"]["app"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
         })
         .collect();
 
-    let namespaces: Vec<Namespace> =
-        ns_res.into_iter().map(|(name, metrics)| Namespace { name, metrics }).collect();
+    let namespaces: Vec<Namespace> = ns_res
+        .into_iter()
+        .map(|(name, metrics)| Namespace { name, metrics })
+        .collect();
 
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    Ok(Snapshot { timestamp, nodes, namespaces, deployments, services, pods, containers })
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    Ok(Snapshot {
+        timestamp,
+        nodes,
+        namespaces,
+        deployments,
+        services,
+        pods,
+        containers,
+    })
 }
 
 fn main() {
@@ -208,7 +256,10 @@ fn main() {
 
     let prom_url = env_str("PROM_URL", "http://prometheus:9090");
     let greycat = env_str("GREYCAT_URL", "http://greycat:8080");
-    let power_query = env_str("POWER_QUERY", "sum by (namespace, pod) (mockpower_pod_watts)");
+    let power_query = env_str(
+        "POWER_QUERY",
+        "sum by (namespace, pod) (mockpower_pod_watts)",
+    );
     let interval = env_f64("INTERVAL", 30.0);
 
     let cli = Client::in_cluster().expect("kubernetes in-cluster client");

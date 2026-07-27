@@ -11,7 +11,7 @@ spec:
     matchLabels: { app: rust-demo-load }
   template:
     metadata:
-      labels: { app: rust-demo-load }
+      labels: { app: rust-demo-load, app.kubernetes.io/part-of: application }
     spec:
       containers:
         - name: load

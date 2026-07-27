@@ -51,7 +51,7 @@ spec:
     matchLabels: { app: otel-collector }
   template:
     metadata:
-      labels: { app: otel-collector }
+      labels: { app: otel-collector, app.kubernetes.io/part-of: observability }
     spec:
       containers:
         - name: collector

@@ -10,7 +10,7 @@ spec:
     matchLabels: { app: predictor }
   template:
     metadata:
-      labels: { app: predictor }
+      labels: { app: predictor, app.kubernetes.io/part-of: wattopus }
     spec:
       containers:
         - name: predictor

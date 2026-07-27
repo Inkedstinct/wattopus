@@ -151,7 +151,8 @@ data:
         {
           "id": 4,
           "type": "timeseries",
-          "title": "unattributed power by pod (top 10)",
+          "description": "route-axis residual: pods with watts, no traces, no part-of label",
+          "title": "residual unattributed by pod (top 10)",
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "fieldConfig": {
@@ -257,6 +258,56 @@ data:
               "legendFormat": "unaccounted %"
             }
           ]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "power by category (W)",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 1, "fillOpacity": 25, "stacking": { "mode": "normal" } }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (category) (wattopus_pod_watts)",
+              "legendFormat": "{{category}}"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "pod watts by category (top 10)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "topk(10, wattopus_pod_watts)",
+              "legendFormat": "{{category}} {{namespace}}/{{pod}}"
+            }
+          ]
         }
       ]
     }
@@ -273,7 +324,7 @@ spec:
     matchLabels: { app: grafana }
   template:
     metadata:
-      labels: { app: grafana }
+      labels: { app: grafana, app.kubernetes.io/part-of: observability }
     spec:
       containers:
         - name: grafana

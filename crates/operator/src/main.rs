@@ -12,7 +12,10 @@ fn env_str(key: &str, default: &str) -> String {
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn twin(greycat: &str, func: &str, args: Value) -> Result<Value, String> {
@@ -27,15 +30,14 @@ fn twin(greycat: &str, func: &str, args: Value) -> Result<Value, String> {
 
 fn respond(req: tiny_http::Request, status: u16, body: Value) {
     let header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
-    let _ = req.respond(Response::from_string(body.to_string()).with_status_code(status).with_header(header));
+    let _ = req.respond(
+        Response::from_string(body.to_string())
+            .with_status_code(status)
+            .with_header(header),
+    );
 }
 
-fn handle_simulate(
-    cli: &Client,
-    greycat: &str,
-    cpu_limit: f64,
-    body: &Value,
-) -> (u16, Value) {
+fn handle_simulate(cli: &Client, greycat: &str, cpu_limit: f64, body: &Value) -> (u16, Value) {
     let ns = body["namespace"].as_str().unwrap_or("");
     let deploy = body["deployment"].as_str().unwrap_or("");
     let replicas = body["replicas"].as_i64().unwrap_or(0);
@@ -46,17 +48,25 @@ fn handle_simulate(
         Err(e) => return (502, json!({"error": e})),
     };
     if sim.is_null() {
-        return (404, json!({"error": format!("{ns}/{deploy} unknown to the twin (no metrics yet?)")}));
+        return (
+            404,
+            json!({"error": format!("{ns}/{deploy} unknown to the twin (no metrics yet?)")}),
+        );
     }
     let result: ScaleSimulation = match serde_json::from_value(sim) {
         Ok(s) => s,
-        Err(e) => return (502, json!({"error": format!("twin::simulate_scale: unexpected shape: {e}")})),
+        Err(e) => {
+            return (
+                502,
+                json!({"error": format!("twin::simulate_scale: unexpected shape: {e}")}),
+            )
+        }
     };
 
     if result.cpu_per_pod_predicted > cpu_limit {
         let _ = twin(greycat, "rollback_scale", json!([ns, deploy]));
         return (
-            409, // TODO : Check if its well supported 
+            409, // TODO : Check if its well supported
             json!({
                 "applied": false, "simulation": result,
                 "reason": format!(
@@ -69,7 +79,10 @@ fn handle_simulate(
 
     if let Err(e) = cli.patch_scale(ns, deploy, replicas) {
         let _ = twin(greycat, "rollback_scale", json!([ns, deploy]));
-        return (502, json!({"applied": false, "simulation": result, "reason": format!("kubectl scale failed: {e}; twin restored")}));
+        return (
+            502,
+            json!({"applied": false, "simulation": result, "reason": format!("kubectl scale failed: {e}; twin restored")}),
+        );
     }
     let _ = twin(greycat, "commit_scale", json!([ns, deploy]));
     (200, json!({"applied": true, "simulation": result}))
