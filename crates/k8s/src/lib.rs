@@ -1,5 +1,5 @@
 //! tiny in-cluster Kubernetes client: reads the mounted service-account token
-//! and CA, talks to the apiserver 
+//! and CA, talks to the apiserver
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -31,7 +31,11 @@ impl Client {
             .with_no_client_auth();
 
         let agent = ureq::AgentBuilder::new().tls_config(Arc::new(tls)).build();
-        Ok(Client { base: format!("https://{host}:{port}"), token: token.trim().to_string(), agent })
+        Ok(Client {
+            base: format!("https://{host}:{port}"),
+            token: token.trim().to_string(),
+            agent,
+        })
     }
 
     fn get(&self, path: &str) -> Result<Value, String> {
@@ -49,7 +53,12 @@ impl Client {
         Ok(body["items"].as_array().cloned().unwrap_or_default())
     }
 
-    pub fn patch_scale(&self, namespace: &str, deployment: &str, replicas: i64) -> Result<(), String> {
+    pub fn patch_scale(
+        &self,
+        namespace: &str,
+        deployment: &str,
+        replicas: i64,
+    ) -> Result<(), String> {
         let path = format!("/apis/apps/v1/namespaces/{namespace}/deployments/{deployment}/scale");
         let patch = serde_json::json!({"spec": {"replicas": replicas}});
         self.agent

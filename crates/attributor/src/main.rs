@@ -23,7 +23,10 @@ fn env_str(key: &str, default: &str) -> String {
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn pod_watts(prom_url: &str, query: &str) -> HashMap<(String, String), f64> {
@@ -47,7 +50,9 @@ fn pod_watts(prom_url: &str, query: &str) -> HashMap<(String, String), f64> {
 }
 
 fn categories(cli: Option<&k8s::Client>) -> HashMap<(String, String), String> {
-    let Some(cli) = cli else { return HashMap::new() };
+    let Some(cli) = cli else {
+        return HashMap::new();
+    };
     match cli.list("/api/v1", "pods") {
         Ok(pods) => pods
             .iter()
@@ -122,7 +127,9 @@ fn render(m: &Metrics, timestamp: u64) -> String {
     out.push_str("# TYPE wattopus_unresolved_services gauge\n");
     out.push_str(&format!("wattopus_unresolved_services {}\n", m.unresolved));
     out.push_str("# TYPE wattopus_last_tick_timestamp_seconds gauge\n");
-    out.push_str(&format!("wattopus_last_tick_timestamp_seconds {timestamp}\n"));
+    out.push_str(&format!(
+        "wattopus_last_tick_timestamp_seconds {timestamp}\n"
+    ));
     out
 }
 
@@ -134,8 +141,10 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let prom_url = env_str("PROM_URL", "http://prometheus:9090");
-    let power_query =
-        env_str("POWER_QUERY", "sum by (namespace, pod) (mockpower_pod_watts)");
+    let power_query = env_str(
+        "POWER_QUERY",
+        "sum by (namespace, pod) (mockpower_pod_watts)",
+    );
     let route_attr = env_str("ROUTE_ATTR", "http.route");
     let interval = env_f64("INTERVAL", 15.0);
 
@@ -158,7 +167,6 @@ fn main() {
         }
     };
 
-    
     {
         let spans = spans.clone();
         let route_attr = route_attr.clone();
@@ -182,7 +190,8 @@ fn main() {
                         let batch = parse(&v, &route_attr);
                         spans.lock().unwrap().extend(batch);
                         let header =
-                            Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+                            Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                                .unwrap();
                         let _ = req.respond(Response::from_string("{}").with_header(header));
                     }
                     Err(_) => {
@@ -199,7 +208,10 @@ fn main() {
         thread::spawn(move || {
             for req in server.incoming_requests() {
                 if req.url() == "/metrics" {
-                    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                    let ts = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
                     let body = render(&metrics.lock().unwrap(), ts);
                     let _ = req.respond(Response::from_string(body));
                 } else {

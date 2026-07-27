@@ -21,7 +21,7 @@ pub struct Res {
 }
 
 impl Res {
-    pub fn add(self, o: Res) -> Res {
+    pub fn addition(self, o: Res) -> Res {
         Res {
             cpu_usage: self.cpu_usage + o.cpu_usage,
             cpu_available: self.cpu_available + o.cpu_available,
@@ -142,7 +142,10 @@ mod tests {
         // re-serialize and compare as values to see in the other direction of changes
         let reserialized = serde_json::to_value(&snap).unwrap();
         let original: serde_json::Value = serde_json::from_str(raw).unwrap();
-        assert_eq!(reserialized, original, "struct and fixture disagree on shape");
+        assert_eq!(
+            reserialized, original,
+            "struct and fixture disagree on shape"
+        );
     }
 
     /// workaround because greycat wraps typed objects with a _type key and serde must ignore it

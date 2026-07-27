@@ -11,7 +11,11 @@ pub struct Span {
 }
 
 fn attr<'a>(attrs: Option<&'a Value>, key: &str) -> Option<&'a Value> {
-    attrs?.as_array()?.iter().find(|a| a["key"] == key).map(|a| &a["value"])
+    attrs?
+        .as_array()?
+        .iter()
+        .find(|a| a["key"] == key)
+        .map(|a| &a["value"])
 }
 
 fn attr_str(attrs: Option<&Value>, key: &str) -> Option<String> {
@@ -24,7 +28,10 @@ fn attr_str(attrs: Option<&Value>, key: &str) -> Option<String> {
 }
 
 fn nano(v: &Value) -> u128 {
-    v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_u64().map(u128::from)).unwrap_or(0)
+    v.as_str()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| v.as_u64().map(u128::from))
+        .unwrap_or(0)
 }
 
 pub fn parse(body: &Value, route_attr: &str) -> Vec<Span> {
@@ -57,11 +64,17 @@ pub fn parse(body: &Value, route_attr: &str) -> Vec<Span> {
 /// Horizontal atrtibution here
 /// spans inherit their trace root's route
 pub fn weights(spans: &[Span]) -> HashMap<(String, String), f64> {
-    let roots: HashMap<&str, &str> =
-        spans.iter().filter(|s| s.root).map(|s| (s.trace.as_str(), s.route.as_str())).collect();
+    let roots: HashMap<&str, &str> = spans
+        .iter()
+        .filter(|s| s.root)
+        .map(|s| (s.trace.as_str(), s.route.as_str()))
+        .collect();
     let mut w: HashMap<(String, String), f64> = HashMap::new();
     for s in spans {
-        let route = roots.get(s.trace.as_str()).copied().unwrap_or(s.route.as_str());
+        let route = roots
+            .get(s.trace.as_str())
+            .copied()
+            .unwrap_or(s.route.as_str());
         *w.entry((s.service.clone(), route.to_string())).or_default() += s.busy;
     }
     w
@@ -82,7 +95,11 @@ pub fn attribute(
 ) -> Attribution {
     let mut per_service: HashMap<&str, HashMap<&str, f64>> = HashMap::new();
     for ((svc, route), wt) in weights {
-        *per_service.entry(svc).or_default().entry(route).or_default() += wt;
+        *per_service
+            .entry(svc)
+            .or_default()
+            .entry(route)
+            .or_default() += wt;
     }
 
     let mut route_watts: HashMap<String, f64> = HashMap::new();
@@ -129,12 +146,15 @@ pub fn attribute(
     }
     *route_watts.entry("_unattributed".into()).or_default() += unattributed.values().sum::<f64>();
 
-    Attribution { route_watts, service_route_watts, unattributed, services, unresolved }
+    Attribution {
+        route_watts,
+        service_route_watts,
+        unattributed,
+        services,
+        unresolved,
+    }
 }
 
-/// category axis: every measured pod tagged with its part-of bucket.
-/// separate from route billing on purpose: folding categories into routes
-/// for traced pods would double-bill and break conservation.
 pub fn category_watts(
     pod_watts: &HashMap<(String, String), f64>,
     categories: &HashMap<(String, String), String>,

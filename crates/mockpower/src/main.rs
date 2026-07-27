@@ -13,7 +13,10 @@ fn env_str(key: &str, default: &str) -> String {
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn tick(prom_url: &str, watts_per_core: f64, idle: f64) -> HashMap<(String, String), f64> {
@@ -27,7 +30,11 @@ fn tick(prom_url: &str, watts_per_core: f64, idle: f64) -> HashMap<(String, Stri
             for m in body["data"]["result"].as_array().unwrap_or(&vec![]) {
                 let ns = m["metric"]["namespace"].as_str().unwrap_or("").to_string();
                 let pod = m["metric"]["pod"].as_str().unwrap_or("").to_string();
-                let cores = m["value"][1].as_str().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0).max(0.0);
+                let cores = m["value"][1]
+                    .as_str()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0)
+                    .max(0.0);
                 out.insert((ns, pod), cores * watts_per_core + idle);
             }
         }
@@ -38,7 +45,9 @@ fn tick(prom_url: &str, watts_per_core: f64, idle: f64) -> HashMap<(String, Stri
 fn render(watts: &HashMap<(String, String), f64>) -> String {
     let mut out = String::from("# TYPE mockpower_pod_watts gauge\n");
     for ((ns, pod), w) in watts {
-        out.push_str(&format!("mockpower_pod_watts{{namespace=\"{ns}\",pod=\"{pod}\"}} {w}\n"));
+        out.push_str(&format!(
+            "mockpower_pod_watts{{namespace=\"{ns}\",pod=\"{pod}\"}} {w}\n"
+        ));
     }
     out
 }

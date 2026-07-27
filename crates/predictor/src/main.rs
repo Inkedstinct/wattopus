@@ -13,7 +13,10 @@ fn env_str(key: &str, default: &str) -> String {
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn twin(greycat: &str, func: &str, args: Value) -> Result<Value, String> {
@@ -36,7 +39,7 @@ fn twin_send(greycat: &str, func: &str, args: Value) -> Result<(), String> {
 
 /// quiescent = the newest point stays within mean +/- sigma of the older
 /// points. sigma gets a floor of 5% of the mean because mock metrics can be
-/// perfectly flat 
+/// perfectly flat
 fn classify(series: &[f64]) -> (f64, bool) {
     let newest = *series.last().unwrap_or(&0.0);
     if series.len() < 3 {
@@ -44,8 +47,7 @@ fn classify(series: &[f64]) -> (f64, bool) {
     }
     let hist = &series[..series.len() - 1];
     let mean = hist.iter().sum::<f64>() / hist.len() as f64;
-    let sigma =
-        (hist.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / hist.len() as f64).sqrt();
+    let sigma = (hist.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / hist.len() as f64).sqrt();
     if (newest - mean).abs() <= sigma.max(mean.abs() * 0.05) {
         (series.iter().sum::<f64>() / series.len() as f64, true)
     } else {
@@ -97,11 +99,13 @@ fn main() {
                 }
             };
 
-            let w = windows.entry((d.namespace.clone(), d.name.clone())).or_insert(Window {
-                last_seen: 0,
-                cpu: Vec::new(),
-                joules: Vec::new(),
-            });
+            let w = windows
+                .entry((d.namespace.clone(), d.name.clone()))
+                .or_insert(Window {
+                    last_seen: 0,
+                    cpu: Vec::new(),
+                    joules: Vec::new(),
+                });
             if sample.timestamp <= w.last_seen {
                 continue; // feeder hasn't pushed since our last poll
             }
@@ -127,7 +131,11 @@ fn main() {
             match twin_send(&greycat, "ingest_prediction", json!([p])) {
                 Ok(()) => log::info!(
                     "{}/{}: cpu {:.3} joules {:.1} quiescent {}",
-                    d.namespace, d.name, cpu_p, joules_p, quiescent
+                    d.namespace,
+                    d.name,
+                    cpu_p,
+                    joules_p,
+                    quiescent
                 ),
                 Err(e) => log::warn!("{e}"),
             }

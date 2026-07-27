@@ -14,7 +14,10 @@ pub struct Tracer {
 }
 
 fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -97,7 +100,7 @@ impl Tracer {
 }
 
 impl Span {
-    /// W3C traceparent https://www.w3.org/TR/trace-context/#traceparent-header 
+    /// W3C traceparent https://www.w3.org/TR/trace-context/#traceparent-header
     pub fn traceparent(&self) -> String {
         format!("00-{}-{}-01", self.trace_id, self.span_id)
     }
