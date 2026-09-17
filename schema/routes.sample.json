@@ -1,0 +1,12 @@
+{
+  "timestamp": 1730800030,
+  "namespace": "wattopus",
+  "routes": [
+    { "name": "/checkout", "rps": 2.0, "watts_billed": 1.2 },
+    { "name": "/catalog", "rps": 0.5, "watts_billed": 0.3 }
+  ],
+  "services": [
+    { "name": "app-gateway", "watts": 0.9 },
+    { "name": "app-compute", "watts": 0.6 }
+  ]
+}

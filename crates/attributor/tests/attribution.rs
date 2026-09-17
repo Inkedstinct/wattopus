@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use attributor::{attribute, category_watts, parse, weights};
+use attributor::{
+    attribute, attribute_with, category_watts, parse, weights, FitContext, InterceptPolicy, Model,
+};
 use serde_json::json;
 
 fn otlp() -> serde_json::Value {
@@ -185,6 +187,200 @@ fn category_axis_conserves_and_buckets() {
         cw[&("kube-system".into(), "coredns-xyz".into())].0,
         "_unlabeled"
     );
+}
+
+fn models() -> HashMap<String, Model> {
+    HashMap::from([
+        (
+            "app-gateway".to_string(),
+            Model {
+                intercept: 1.0,
+                coefs: HashMap::from([("/checkout".to_string(), 0.5)]),
+            },
+        ),
+        (
+            "app-compute".to_string(),
+            Model {
+                intercept: 0.5,
+                coefs: HashMap::from([("/checkout".to_string(), 0.25)]),
+            },
+        ),
+    ])
+}
+
+fn rates() -> HashMap<String, f64> {
+    HashMap::from([("/checkout".to_string(), 2.0)])
+}
+
+#[test]
+fn fitted_idle_policy_conserves_and_names_idle() {
+    let watts = sample_watts();
+    let m = models();
+    let r = rates();
+    let ctx = FitContext {
+        models: &m,
+        rps: &r,
+        policy: InterceptPolicy::Idle,
+    };
+    let a = attribute_with(
+        &weights(&parse(&otlp(), "http.route")),
+        &watts,
+        &no_labels(),
+        Some(&ctx),
+    );
+    assert!((a.route_watts["/checkout"] - 3.0).abs() < 1e-9);
+    assert!((a.route_watts["_idle"] - 3.0).abs() < 1e-9);
+    let total: f64 = a.route_watts.values().sum();
+    assert!((total - watts.values().sum::<f64>()).abs() < 1e-9);
+    assert!((a.idle_watts["app-gateway"] - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn fitted_equal_policy_puts_everything_on_routes() {
+    let watts = sample_watts();
+    let m = models();
+    let r = rates();
+    let ctx = FitContext {
+        models: &m,
+        rps: &r,
+        policy: InterceptPolicy::Equal,
+    };
+    let a = attribute_with(
+        &weights(&parse(&otlp(), "http.route")),
+        &watts,
+        &no_labels(),
+        Some(&ctx),
+    );
+    assert!((a.route_watts["/checkout"] - 6.0).abs() < 1e-9);
+    assert!(!a.route_watts.contains_key("_idle"));
+    let total: f64 = a.route_watts.values().sum();
+    assert!((total - watts.values().sum::<f64>()).abs() < 1e-9);
+}
+
+#[test]
+fn fitted_proportional_policy_conserves() {
+    let watts = sample_watts();
+    let m = models();
+    let r = rates();
+    let ctx = FitContext {
+        models: &m,
+        rps: &r,
+        policy: InterceptPolicy::Proportional,
+    };
+    let a = attribute_with(
+        &weights(&parse(&otlp(), "http.route")),
+        &watts,
+        &no_labels(),
+        Some(&ctx),
+    );
+    assert!((a.route_watts["/checkout"] - 6.0).abs() < 1e-9);
+    let total: f64 = a.route_watts.values().sum();
+    assert!((total - watts.values().sum::<f64>()).abs() < 1e-9);
+}
+
+#[test]
+fn missing_model_falls_back_to_busy_time() {
+    let watts = sample_watts();
+    let m: HashMap<String, Model> = HashMap::new();
+    let r = rates();
+    let ctx = FitContext {
+        models: &m,
+        rps: &r,
+        policy: InterceptPolicy::Idle,
+    };
+    let a = attribute_with(
+        &weights(&parse(&otlp(), "http.route")),
+        &watts,
+        &no_labels(),
+        Some(&ctx),
+    );
+    // identical to the busy-time result
+    assert!((a.route_watts["/checkout"] - 6.0).abs() < 1e-9);
+    assert!((a.route_watts["_unattributed"] - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn negative_coefficients_are_clamped() {
+    let watts = sample_watts();
+    let m = HashMap::from([(
+        "app-gateway".to_string(),
+        Model {
+            intercept: 1.0,
+            coefs: HashMap::from([("/checkout".to_string(), -5.0)]),
+        },
+    )]);
+    let r = rates();
+    let ctx = FitContext {
+        models: &m,
+        rps: &r,
+        policy: InterceptPolicy::Idle,
+    };
+    let a = attribute_with(
+        &weights(&parse(&otlp(), "http.route")),
+        &watts,
+        &no_labels(),
+        Some(&ctx),
+    );
+    // gateway's 4 W all become idle; compute has no model and stays busy-time
+    assert!((a.idle_watts["app-gateway"] - 4.0).abs() < 1e-9);
+    let total: f64 = a.route_watts.values().sum();
+    assert!((total - watts.values().sum::<f64>()).abs() < 1e-9);
+}
+
+#[test]
+fn zero_rate_service_falls_back_rather_than_dividing_by_zero() {
+    let watts = sample_watts();
+    let m = HashMap::from([(
+        "app-gateway".to_string(),
+        Model {
+            intercept: 0.0,
+            coefs: HashMap::from([("/checkout".to_string(), 0.5)]),
+        },
+    )]);
+    let r = HashMap::from([("/checkout".to_string(), 0.0)]);
+    let ctx = FitContext {
+        models: &m,
+        rps: &r,
+        policy: InterceptPolicy::Idle,
+    };
+    let a = attribute_with(
+        &weights(&parse(&otlp(), "http.route")),
+        &watts,
+        &no_labels(),
+        Some(&ctx),
+    );
+    assert!((a.route_watts["/checkout"] - 6.0).abs() < 1e-9);
+    let total: f64 = a.route_watts.values().sum();
+    assert!((total - watts.values().sum::<f64>()).abs() < 1e-9);
+}
+
+#[test]
+fn route_rates_count_root_spans_only() {
+    let spans = parse(&otlp(), "http.route");
+    let r = attributor::route_rates(&spans, 2.0);
+    // one root span on /checkout in a 2s tick; the child does not count
+    assert!((r["/checkout"] - 0.5).abs() < 1e-9);
+    assert_eq!(r.len(), 1);
+}
+
+#[test]
+fn route_rates_tolerate_zero_elapsed() {
+    let spans = parse(&otlp(), "http.route");
+    let r = attributor::route_rates(&spans, 0.0);
+    assert!((r["/checkout"] - 0.0).abs() < 1e-9);
+}
+
+#[test]
+fn service_watts_sum_claimed_pods() {
+    let a = attribute(
+        &weights(&parse(&otlp(), "http.route")),
+        &sample_watts(),
+        &no_labels(),
+    );
+    assert!((a.service_watts["app-gateway"] - 4.0).abs() < 1e-9);
+    assert!((a.service_watts["app-compute"] - 2.0).abs() < 1e-9);
+    // the unclaimed pod belongs to no service
+    assert_eq!(a.service_watts.len(), 2);
 }
 
 #[test]

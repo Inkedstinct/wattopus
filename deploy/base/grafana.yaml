@@ -308,6 +308,99 @@ data:
               "legendFormat": "{{category}} {{namespace}}/{{pod}}"
             }
           ]
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "route power: busy-time vs fitted (W)",
+          "description": "same watts, two splits. divergence is the #8 result",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 73 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "wattopus_route_power_watts_busy",
+              "legendFormat": "busy {{route}}"
+            },
+            {
+              "refId": "B",
+              "expr": "wattopus_route_power_watts_fitted",
+              "legendFormat": "fitted {{route}}"
+            },
+            {
+              "refId": "C",
+              "expr": "wattopus_attribution_divergence_watts",
+              "legendFormat": "divergence {{route}}"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "type": "timeseries",
+          "title": "idle power by service (W)",
+          "description": "fitted intercept: power drawn at zero traffic",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 81 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "custom": { "lineWidth": 1, "fillOpacity": 25, "stacking": { "mode": "normal" } }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "wattopus_route_idle_watts",
+              "legendFormat": "{{service}}"
+            }
+          ]
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "model health: r2 and marginal cost",
+          "description": "r2 below FIT_MIN_R2 means the attributor is on the busy-time fallback",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 81 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": { "lineWidth": 2, "fillOpacity": 0 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "wattopus_fit_r2",
+              "legendFormat": "r2 {{service}}"
+            },
+            {
+              "refId": "B",
+              "expr": "wattopus_fit_watts_per_rps",
+              "legendFormat": "W/rps {{service}} {{route}}"
+            }
+          ]
         }
       ]
     }

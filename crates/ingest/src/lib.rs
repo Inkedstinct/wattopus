@@ -128,6 +128,73 @@ pub struct Prediction {
     pub quiescent: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RouteObservation {
+    pub name: String,
+    pub rps: f64,
+    pub watts_billed: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServiceObservation {
+    pub name: String,
+    pub watts: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RouteSnapshot {
+    pub timestamp: u64,
+    pub namespace: String,
+    pub routes: Vec<RouteObservation>,
+    pub services: Vec<ServiceObservation>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RouteCoef {
+    pub route: String,
+    pub watts_per_rps: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PowerModel {
+    pub namespace: String,
+    pub service: String,
+    pub fitted_at: i64,
+    pub intercept: f64,
+    pub coefs: Vec<RouteCoef>,
+    pub r2: f64,
+    pub samples: i64,
+}
+
+/// long format: one row per (timestamp, service, route)
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HistoryRow {
+    pub timestamp: i64,
+    pub namespace: String,
+    pub service: String,
+    pub service_watts: f64,
+    pub route: String,
+    pub rps: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ServicePrediction {
+    pub service: String,
+    pub deployment: String,
+    pub watts_now: f64,
+    pub watts_predicted: f64,
+}
+
+/// what twin::simulate_load returns
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LoadSimulation {
+    pub namespace: String,
+    pub route: String,
+    pub rps: f64,
+    pub total_watts: f64,
+    pub services: Vec<ServicePrediction>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +260,48 @@ mod tests {
         };
         let json = serde_json::to_string(&sim).unwrap();
         assert_eq!(serde_json::from_str::<ScaleSimulation>(&json).unwrap(), sim);
+    }
+
+    /// the "golden" fixture
+    #[test]
+    fn route_snapshot_matches_golden_fixture() {
+        let raw = include_str!("../../../schema/routes.sample.json");
+        let snap: RouteSnapshot =
+            serde_json::from_str(raw).expect("fixture must deserialize into RouteSnapshot");
+        let reserialized = serde_json::to_value(&snap).unwrap();
+        let original: serde_json::Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            reserialized, original,
+            "struct and fixture disagree on shape"
+        );
+    }
+
+    #[test]
+    fn power_model_tolerates_greycat_type_envelope() {
+        let raw = r#"{"_type":"twin.PowerModel","namespace":"wattopus","service":"app-compute",
+            "fitted_at":1730800030,"intercept":0.4,
+            "coefs":[{"_type":"twin.RouteCoef","route":"/checkout","watts_per_rps":0.12}],
+            "r2":0.93,"samples":120}"#;
+        let m: PowerModel = serde_json::from_str(raw).unwrap();
+        assert_eq!(m.coefs.len(), 1);
+        assert!((m.coefs[0].watts_per_rps - 0.12).abs() < 1e-12);
+    }
+
+    #[test]
+    fn load_simulation_roundtrips() {
+        let sim = LoadSimulation {
+            namespace: "wattopus".into(),
+            route: "/checkout".into(),
+            rps: 5.0,
+            total_watts: 3.5,
+            services: vec![ServicePrediction {
+                service: "app-compute".into(),
+                deployment: "app-compute".into(),
+                watts_now: 1.0,
+                watts_predicted: 2.0,
+            }],
+        };
+        let json = serde_json::to_string(&sim).unwrap();
+        assert_eq!(serde_json::from_str::<LoadSimulation>(&json).unwrap(), sim);
     }
 }

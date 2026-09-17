@@ -5,6 +5,7 @@ resources:
   - 00-namespace.yaml
   - attributor.yaml
   - feeder.yaml
+  - fitter.yaml
   - grafana.yaml
   - greycat.yaml
   - kubediagram.yaml

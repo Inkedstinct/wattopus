@@ -51,6 +51,10 @@ spec:
           env:
             - { name: PROM_URL, value: http://prometheus:9090 }
             - { name: POWER_QUERY, value: "sum by (namespace, pod) (mockpower_pod_watts)" }
+            - { name: GREYCAT_URL, value: http://greycat:8080 }
+            - { name: TWIN_NAMESPACE, value: wattopus }
+            - { name: ATTRIBUTION_MODE, value: busy }
+            - { name: INTERCEPT_POLICY, value: idle }
           ports:
             - { containerPort: 4318 }
             - { containerPort: 9500 }

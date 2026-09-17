@@ -6,11 +6,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tiny_http::{Header, Response, Server};
 
-use attributor::{attribute, category_watts, parse, weights, Span};
+use attributor::{
+    attribute, attribute_with, category_watts, parse, route_rates, weights, FitContext,
+    InterceptPolicy, Model, Span,
+};
 
 struct Metrics {
     energy: HashMap<String, f64>,
     power: HashMap<String, f64>,
+    power_busy: HashMap<String, f64>,
+    power_fitted: HashMap<String, f64>,
+    idle: HashMap<String, f64>,
+    divergence: HashMap<String, f64>,
     service_route: HashMap<(String, String), f64>,
     unattributed: HashMap<(String, String), f64>,
     pod_category: HashMap<(String, String), (String, f64)>,
@@ -47,6 +54,46 @@ fn pod_watts(prom_url: &str, query: &str) -> HashMap<(String, String), f64> {
         }
     }
     out
+}
+
+fn fetch_models(greycat: &str, namespace: &str) -> HashMap<String, Model> {
+    let mut out = HashMap::new();
+    // nested match: send_json and into_json fail with different error types
+    match ureq::post(&format!("{greycat}/twin::route_models"))
+        .set("Accept", "application/json")
+        .timeout(Duration::from_secs(10))
+        .send_json(serde_json::json!([namespace]))
+    {
+        Ok(r) => match r.into_json::<Vec<ingest::PowerModel>>() {
+            Ok(models) => {
+                for m in models {
+                    out.insert(
+                        m.service.clone(),
+                        Model {
+                            intercept: m.intercept,
+                            coefs: m
+                                .coefs
+                                .iter()
+                                .map(|c| (c.route.clone(), c.watts_per_rps))
+                                .collect(),
+                        },
+                    );
+                }
+            }
+            Err(e) => log::warn!("twin::route_models: decode: {e}"),
+        },
+        Err(e) => log::warn!("twin::route_models: {e}"),
+    }
+    out
+}
+
+fn push_routes(greycat: &str, snap: &ingest::RouteSnapshot) {
+    let r = ureq::post(&format!("{greycat}/twin::ingest_routes"))
+        .timeout(Duration::from_secs(10))
+        .send_json(serde_json::json!([snap]));
+    if let Err(e) = r {
+        log::warn!("twin::ingest_routes: {e}");
+    }
 }
 
 fn categories(cli: Option<&k8s::Client>) -> HashMap<(String, String), String> {
@@ -86,6 +133,39 @@ fn render(m: &Metrics, timestamp: u64) -> String {
             "wattopus_route_power_watts{{route=\"{}\"}} {}\n",
             escape(route),
             w
+        ));
+    }
+    // busy and fitted both exported for exp
+    out.push_str("# TYPE wattopus_route_power_watts_busy gauge\n");
+    for (route, w) in &m.power_busy {
+        out.push_str(&format!(
+            "wattopus_route_power_watts_busy{{route=\"{}\"}} {}\n",
+            escape(route),
+            w
+        ));
+    }
+    out.push_str("# TYPE wattopus_route_power_watts_fitted gauge\n");
+    for (route, w) in &m.power_fitted {
+        out.push_str(&format!(
+            "wattopus_route_power_watts_fitted{{route=\"{}\"}} {}\n",
+            escape(route),
+            w
+        ));
+    }
+    out.push_str("# TYPE wattopus_route_idle_watts gauge\n");
+    for (svc, w) in &m.idle {
+        out.push_str(&format!(
+            "wattopus_route_idle_watts{{service=\"{}\"}} {}\n",
+            escape(svc),
+            w
+        ));
+    }
+    out.push_str("# TYPE wattopus_attribution_divergence_watts gauge\n");
+    for (route, d) in &m.divergence {
+        out.push_str(&format!(
+            "wattopus_attribution_divergence_watts{{route=\"{}\"}} {}\n",
+            escape(route),
+            d
         ));
     }
     out.push_str("# TYPE wattopus_service_route_power_watts gauge\n");
@@ -147,11 +227,19 @@ fn main() {
     );
     let route_attr = env_str("ROUTE_ATTR", "http.route");
     let interval = env_f64("INTERVAL", 15.0);
+    let greycat = env_str("GREYCAT_URL", "http://greycat:8080");
+    let namespace = env_str("TWIN_NAMESPACE", "wattopus");
+    let policy = InterceptPolicy::parse(&env_str("INTERCEPT_POLICY", "idle"));
+    let mode = env_str("ATTRIBUTION_MODE", "busy");
 
     let spans: Arc<Mutex<Vec<Span>>> = Arc::new(Mutex::new(Vec::new()));
     let metrics = Arc::new(Mutex::new(Metrics {
         energy: HashMap::new(),
         power: HashMap::new(),
+        power_busy: HashMap::new(),
+        power_fitted: HashMap::new(),
+        idle: HashMap::new(),
+        divergence: HashMap::new(),
         service_route: HashMap::new(),
         unattributed: HashMap::new(),
         pod_category: HashMap::new(),
@@ -232,7 +320,18 @@ fn main() {
         let batch: Vec<Span> = std::mem::take(&mut *spans.lock().unwrap());
         let cats = categories(cli.as_ref());
         let watts = pod_watts(&prom_url, &power_query);
-        let a = attribute(&weights(&batch), &watts, &cats);
+        let rates = route_rates(&batch, elapsed);
+        let models = fetch_models(&greycat, &namespace);
+        let ctx = FitContext {
+            models: &models,
+            rps: &rates,
+            policy,
+        };
+        // both families every tick
+        let w = weights(&batch);
+        let busy = attribute(&w, &watts, &cats);
+        let fitted = attribute_with(&w, &watts, &cats, Some(&ctx));
+        let a = if mode == "fitted" { &fitted } else { &busy };
 
         let mut m = metrics.lock().unwrap();
         m.power.clear();
@@ -240,14 +339,56 @@ fn main() {
             *m.energy.entry(route.clone()).or_default() += w * elapsed;
             m.power.insert(route.clone(), *w);
         }
-        m.service_route = a.service_route_watts;
-        m.unattributed = a.unattributed;
+        m.service_route = a.service_route_watts.clone();
+        m.unattributed = a.unattributed.clone();
         m.pod_category = category_watts(&watts, &cats);
+        m.power_busy = busy.route_watts.clone();
+        m.power_fitted = fitted.route_watts.clone();
+        m.idle = fitted.idle_watts.clone();
+        // what a route gains or loses by being billed on measured marginal
+        // cost instead of busy time
+        m.divergence = busy
+            .route_watts
+            .iter()
+            .filter(|(r, _)| !r.starts_with('_'))
+            .map(|(r, w)| {
+                let f = fitted.route_watts.get(r).copied().unwrap_or(0.0);
+                (r.clone(), f - w)
+            })
+            .collect();
         m.coverage = a
             .services
             .iter()
             .map(|(svc, (pods, busy))| (svc.clone(), busy / (elapsed * *pods as f64)))
             .collect();
         m.unresolved = a.unresolved;
+
+        // release before the POST: the scrape thread must not wait on the twin
+        // TODO: CHECK
+        drop(m);
+        let snap = ingest::RouteSnapshot {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            namespace: namespace.clone(),
+            routes: rates
+                .iter()
+                .map(|(name, rps)| ingest::RouteObservation {
+                    name: name.clone(),
+                    rps: *rps,
+                    watts_billed: a.route_watts.get(name).copied().unwrap_or(0.0),
+                })
+                .collect(),
+            services: a
+                .service_watts
+                .iter()
+                .map(|(name, watts)| ingest::ServiceObservation {
+                    name: name.clone(),
+                    watts: *watts,
+                })
+                .collect(),
+        };
+        push_routes(&greycat, &snap);
     }
 }
