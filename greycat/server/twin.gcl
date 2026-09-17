@@ -30,6 +30,7 @@ type Namespace {
     services: nodeIndex<String, node<KService>>;
     pods: nodeIndex<String, node<Pod>>;
     metrics: nodeTime<Res>;
+    routes: nodeIndex<String, node<Route>>?; // nullable so pre-#8 graphs still load
 }
 
 type Deployment {
@@ -45,6 +46,40 @@ type KService {
     name: String;
     namespace: String;
     deployment: String;
+    power: nodeTime<PowerSample>?; // measured watts, written by the attributor
+    power_model: nodeTime<PowerModel>?; // fit output, written by the fitter
+}
+
+// routes are graph citizens: the fit regresses service watts against their rps
+type Route {
+    name: String;
+    namespace: String;
+    samples: nodeTime<RouteSample>;
+}
+
+type RouteSample {
+    rps: float;
+    watts_billed: float;
+}
+
+type PowerSample {
+    watts: float;
+}
+
+type RouteCoef {
+    route: String;
+    watts_per_rps: float;
+}
+
+// W_s(t) = intercept + sum_r watts_per_rps[r] * rps_r(t)
+type PowerModel {
+    namespace: String;
+    service: String;
+    fitted_at: int;
+    intercept: float;
+    coefs: Array<RouteCoef>;
+    r2: float;
+    samples: int;
 }
 
 type Pod {
@@ -121,6 +156,53 @@ private type InSnapshot {
     services: Array<InService>;
     pods: Array<InPod>;
     containers: Array<InContainer>;
+}
+
+// route coupling wire shapes, mirroring crates/ingest
+
+@volatile
+private type InRouteObs {
+    name: String;
+    rps: float;
+    watts_billed: float;
+}
+@volatile
+private type InServiceObs {
+    name: String;
+    watts: float;
+}
+@volatile
+private type InRouteSnapshot {
+    timestamp: int;
+    namespace: String;
+    routes: Array<InRouteObs>;
+    services: Array<InServiceObs>;
+}
+
+@volatile
+private type InRouteCoef {
+    route: String;
+    watts_per_rps: float;
+}
+@volatile
+private type InPowerModel {
+    namespace: String;
+    service: String;
+    fitted_at: int;
+    intercept: float;
+    coefs: Array<InRouteCoef>;
+    r2: float;
+    samples: int;
+}
+
+// long format: one row per (timestamp, service, route)
+type HistoryRow {
+    timestamp: int;
+    namespace: String;
+    service: String;
+    service_watts: float;
+    route: String;
+    rps: float;
 }
 
 private fn to_res(m: InRes): Res {
@@ -216,6 +298,29 @@ private fn ensure_pod(ns: node<Namespace>, p: InPod): node<Pod> {
     return pod;
 }
 
+private fn ensure_route(ns: node<Namespace>, name: String): node<Route> {
+    ns->routes ?= nodeIndex<String, node<Route>> {};
+    var r = ns->routes.get(name);
+    if (r == null) {
+        r = node<Route> {
+            Route { name: name, namespace: ns->name, samples: nodeTime<RouteSample> {} }
+        };
+        ns->routes.set(name, r);
+    }
+    return r;
+}
+
+// the attributor may see a service before the feeder does; deployment stays
+// empty until ingest() fills it
+private fn ensure_service(ns: node<Namespace>, name: String): node<KService> {
+    var s = ns->services.get(name);
+    if (s == null) {
+        s = node<KService> { KService { name: name, namespace: ns->name, deployment: "" } };
+        ns->services.set(name, s);
+    }
+    return s;
+}
+
 // Contract with the feeder
 // TODO : Check to make it stronger, currently fails on tests only
 @expose
@@ -237,15 +342,8 @@ fn ingest(s: InSnapshot) {
     }
 
     for (_, sv in s.services) {
-        var ns = ensure_ns(sv.namespace);
-        if (ns->services.get(sv.name) == null) {
-            ns->services.set(
-                sv.name,
-                node<KService> {
-                    KService { name: sv.name, namespace: sv.namespace, deployment: sv.deployment }
-                }
-            );
-        }
+        // refresh, not create-once: ingest_routes may have made it first
+        ensure_service(ensure_ns(sv.namespace), sv.name)->deployment = sv.deployment;
     }
 
     for (_, p in s.pods) {
@@ -264,6 +362,220 @@ fn ingest(s: InSnapshot) {
         }
         cont->metrics.setAt(t, to_res(c.metrics));
     }
+}
+
+// Contract with the attributor. routes and services share one timestamp: the
+// fit needs aligned (X, y) pairs and two pipelines would drift
+@expose
+fn ingest_routes(s: InRouteSnapshot) {
+    var t = time::new(s.timestamp, DurationUnit::seconds);
+    var ns = ensure_ns(s.namespace);
+
+    for (_, r in s.routes) {
+        ensure_route(ns, r.name)->samples.setAt(
+            t,
+            RouteSample { rps: r.rps, watts_billed: r.watts_billed }
+        );
+    }
+
+    for (_, sv in s.services) {
+        var svc = ensure_service(ns, sv.name);
+        svc->power ?= nodeTime<PowerSample> {};
+        svc->power.setAt(t, PowerSample { watts: sv.watts });
+    }
+}
+
+// what the fitter regresses over. same writer wrote both series at the same
+// t, so resolveAt is an exact lookup, not an interpolation
+@expose
+fn route_history(ns_name: String, from_sec: int, to_sec: int): Array<HistoryRow> {
+    var out = Array<HistoryRow> {};
+    var ns = namespaces.get(ns_name);
+    if (ns == null || ns->routes == null) {
+        return out;
+    }
+    var from = time::new(from_sec, DurationUnit::seconds);
+    var to = time::new(to_sec, DurationUnit::seconds);
+
+    for (_, svc in ns->services) {
+        var power = svc->power;
+        if (power == null) {
+            continue;
+        }
+        var t = power.firstTime();
+        while (t != null) {
+            if (t > to) {
+                break;
+            }
+            if (t >= from) {
+                var p = power.resolveAt(t);
+                if (p != null) {
+                    for (_, r in ns->routes) {
+                        var s = r->samples.resolveAt(t);
+                        if (s != null) {
+                            out.add(HistoryRow {
+                                    timestamp: t.to(DurationUnit::seconds),
+                                    namespace: ns_name,
+                                    service: svc->name,
+                                    service_watts: p.watts,
+                                    route: r->name,
+                                    rps: s.rps
+                                });
+                        }
+                    }
+                }
+            }
+            t = power.next(t);
+        }
+    }
+    return out;
+}
+
+// Contract with the fitter
+@expose
+fn ingest_route_model(m: InPowerModel): null {
+    var ns = namespaces.get(m.namespace);
+    if (ns == null) {
+        return;
+    }
+    var svc = ns->services.get(m.service);
+    if (svc == null) {
+        return;
+    }
+    var coefs = Array<RouteCoef> {};
+    for (_, c in m.coefs) {
+        coefs.add(RouteCoef { route: c.route, watts_per_rps: c.watts_per_rps });
+    }
+    svc->power_model ?= nodeTime<PowerModel> {};
+    svc->power_model.setAt(
+        time::new(m.fitted_at, DurationUnit::seconds),
+        PowerModel {
+            namespace: m.namespace,
+            service: m.service,
+            fitted_at: m.fitted_at,
+            intercept: m.intercept,
+            coefs: coefs,
+            r2: m.r2,
+            samples: m.samples
+        }
+    );
+}
+
+@expose
+fn route_models(ns_name: String): Array<PowerModel> {
+    var out = Array<PowerModel> {};
+    var ns = namespaces.get(ns_name);
+    if (ns == null) {
+        return out;
+    }
+    for (_, svc in ns->services) {
+        // assign then null-check: last_of takes a non-null series
+        var series = svc->power_model;
+        if (series == null) {
+            continue;
+        }
+        var m = last_of(series);
+        if (m != null) {
+            out.add(m);
+        }
+    }
+    return out;
+}
+
+type ServicePrediction {
+    service: String;
+    deployment: String;
+    watts_now: float;
+    watts_predicted: float;
+}
+type LoadSimulation {
+    namespace: String;
+    route: String;
+    rps: float;
+    total_watts: float;
+    services: Array<ServicePrediction>;
+}
+
+private fn current_rps(ns: node<Namespace>, name: String): float {
+    if (ns->routes == null) {
+        return 0.0;
+    }
+    var r = ns->routes.get(name);
+    if (r == null) {
+        return 0.0;
+    }
+    return last_of(r->samples)?.rps ?? 0.0;
+}
+
+// read-only, unlike simulate_scale: there is nothing staged in k8s to commit
+// or roll back. holds every other route at its current rate
+@expose
+fn simulate_load(ns_name: String, route: String, rps: float): LoadSimulation? {
+    var ns = namespaces.get(ns_name);
+    if (ns == null) {
+        return null;
+    }
+    var out = Array<ServicePrediction> {};
+    var total = 0.0;
+
+    for (_, svc in ns->services) {
+        var series = svc->power_model;
+        if (series == null) {
+            continue;
+        }
+        var m = last_of(series);
+        if (m == null) {
+            continue;
+        }
+        var predicted = m.intercept;
+        for (_, c in m.coefs) {
+            var beta = c.watts_per_rps;
+            if (beta < 0.0) {
+                beta = 0.0; // a route cannot un-burn power
+            }
+            var lambda = current_rps(ns, c.route);
+            if (c.route == route) {
+                lambda = rps;
+            }
+            predicted = predicted + beta * lambda;
+        }
+        var power = svc->power;
+        var watts_now = 0.0;
+        if (power != null) {
+            watts_now = last_of(power)?.watts ?? 0.0;
+        }
+        out.add(ServicePrediction {
+                service: svc->name,
+                deployment: svc->deployment,
+                watts_now: watts_now,
+                watts_predicted: predicted
+            });
+        total = total + predicted;
+    }
+
+    return LoadSimulation {
+        namespace: ns_name,
+        route: route,
+        rps: rps,
+        total_watts: total,
+        services: out
+    };
+}
+
+// writes onto the PVC under files/, so the export is durable and covered by
+// the existing backup
+@expose
+fn export_history(ns_name: String, from_sec: int, to_sec: int): String {
+    var path = "files/route_history_${to_sec}.csv";
+    var w = CsvWriter<HistoryRow> {
+        path: path,
+        format: CsvFormat { header_lines: 1, separator: ',' }
+    };
+    for (_, row in route_history(ns_name, from_sec, to_sec)) {
+        w.write(row);
+    }
+    w.flush();
+    return path;
 }
 
 private fn find_deployment(ns_name: String, name: String): node<Deployment>? {
@@ -527,6 +839,20 @@ fn graph_nodes(): Array<GraphNode> {
                     -1
                 ));
         }
+        if (ns->routes != null) {
+            for (_, r in ns->routes) {
+                var rs = last_of(r->samples);
+                out.add(gnode(
+                        "route/${ns->name}/${r->name}",
+                        r->name,
+                        "route",
+                        null,
+                        rs?.rps ?? 0.0,
+                        0,
+                        -1
+                    ));
+            }
+        }
     }
     return out;
 }
@@ -554,6 +880,28 @@ fn graph_edges(): Array<GraphEdge> {
                 out.add(GraphEdge { id: "${pid}>node/${p->knode}", source: pid, target: "node/${p->knode}" });
             }
         }
+        // a route points at every deployment whose model prices it
+        if (ns->routes != null) {
+            for (_, r in ns->routes) {
+                var rid = "route/${ns->name}/${r->name}";
+                for (_, svc in ns->services) {
+                    var series = svc->power_model;
+                    if (series == null || svc->deployment == "") {
+                        continue;
+                    }
+                    var m = last_of(series);
+                    if (m == null) {
+                        continue;
+                    }
+                    for (_, c in m.coefs) {
+                        if (c.route == r->name && c.watts_per_rps > 0.0) {
+                            var did = "deploy/${ns->name}/${svc->deployment}";
+                            out.add(GraphEdge { id: "${rid}>${did}", source: rid, target: did });
+                        }
+                    }
+                }
+            }
+        }
     }
     return out;
 }
@@ -564,6 +912,53 @@ fn graph_edges(): Array<GraphEdge> {
 
 // firstTime is the smallest, we stop at the first sample newer than cutoff.
 private fn prune_series(series: nodeTime<Res>, cutoff_sec: int): int {
+    var pruned = 0;
+    var t = series.firstTime();
+    while (t != null) {
+        if (t.to(DurationUnit::seconds) >= cutoff_sec) {
+            break;
+        }
+        var nxt = series.next(t);
+        series.removeAt(t);
+        pruned = pruned + 1;
+        t = nxt;
+    }
+    return pruned;
+}
+
+// same walk as prune_series, once per value type: generics do not carry the
+// removeAt traversal here and three short twins beat fighting it
+private fn prune_route(series: nodeTime<RouteSample>, cutoff_sec: int): int {
+    var pruned = 0;
+    var t = series.firstTime();
+    while (t != null) {
+        if (t.to(DurationUnit::seconds) >= cutoff_sec) {
+            break;
+        }
+        var nxt = series.next(t);
+        series.removeAt(t);
+        pruned = pruned + 1;
+        t = nxt;
+    }
+    return pruned;
+}
+
+private fn prune_power(series: nodeTime<PowerSample>, cutoff_sec: int): int {
+    var pruned = 0;
+    var t = series.firstTime();
+    while (t != null) {
+        if (t.to(DurationUnit::seconds) >= cutoff_sec) {
+            break;
+        }
+        var nxt = series.next(t);
+        series.removeAt(t);
+        pruned = pruned + 1;
+        t = nxt;
+    }
+    return pruned;
+}
+
+private fn prune_model(series: nodeTime<PowerModel>, cutoff_sec: int): int {
     var pruned = 0;
     var t = series.firstTime();
     while (t != null) {
@@ -589,6 +984,21 @@ fn run_retention(): int {
         pruned = pruned + prune_series(ns->metrics, cutoff_sec);
         for (_, d in ns->deployments) {
             pruned = pruned + prune_series(d->metrics, cutoff_sec);
+        }
+        if (ns->routes != null) {
+            for (_, r in ns->routes) {
+                pruned = pruned + prune_route(r->samples, cutoff_sec);
+            }
+        }
+        for (_, svc in ns->services) {
+            var power = svc->power;
+            if (power != null) {
+                pruned = pruned + prune_power(power, cutoff_sec);
+            }
+            var model = svc->power_model;
+            if (model != null) {
+                pruned = pruned + prune_model(model, cutoff_sec);
+            }
         }
         for (_, p in ns->pods) {
             pruned = pruned + prune_series(p->metrics, cutoff_sec);

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fitter
+  namespace: wattopus
+  labels: { app: fitter }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fitter }
+  template:
+    metadata:
+      labels: { app: fitter, app.kubernetes.io/part-of: wattopus }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9500"
+    spec:
+      containers:
+        - name: fitter
+          image: inkedstinct/fitter:0.2.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: GREYCAT_URL, value: http://greycat:8080 }
+            - { name: TWIN_NAMESPACE, value: wattopus }
+            - { name: FIT_INTERVAL, value: "300" }
+            - { name: FIT_WINDOW, value: "7200" }
+            - { name: FIT_MIN_SAMPLES, value: "60" }
+            - { name: FIT_MIN_R2, value: "0.5" }
+          ports:
+            - { containerPort: 9500 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fitter
+  namespace: wattopus
+spec:
+  selector: { app: fitter }
+  ports:
+    - { name: metrics, port: 9500 }

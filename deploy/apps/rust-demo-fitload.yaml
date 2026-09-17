@@ -1,0 +1,27 @@
+# phased, seeded traffic for the #8
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rust-demo-fitload
+  namespace: wattopus
+  labels: { app: rust-demo-fitload }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: rust-demo-fitload }
+  template:
+    metadata:
+      labels: { app: rust-demo-fitload, app.kubernetes.io/part-of: application }
+    spec:
+      containers:
+        - name: load
+          image: inkedstinct/app:0.2.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: ROLE, value: load }
+            - { name: TARGET, value: "http://app-gateway:8000" }
+            - { name: ROUTES, value: "/checkout,/catalog,/report" }
+            - { name: SEED, value: "42" }
+            - { name: PHASE, value: "300" }
+            - { name: RATE_MIN, value: "0.2" }
+            - { name: RATE_MAX, value: "3.0" }

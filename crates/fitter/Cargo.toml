@@ -1,20 +1,19 @@
 [package]
-name = "attributor"
+name = "fitter"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "attributor"
+name = "fitter"
 path = "src/main.rs"
 
 [lib]
-name = "attributor"
+name = "fitter"
 path = "src/lib.rs"
 
 [dependencies]
-k8s = { path = "../k8s" }
 ingest = { path = "../ingest" }
 tiny_http.workspace = true
 ureq.workspace = true

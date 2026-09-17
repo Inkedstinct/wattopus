@@ -42,6 +42,7 @@ name = "attributor"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "ingest",
  "k8s",
  "log",
  "serde",
@@ -162,6 +163,19 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "fitter"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "ingest",
+ "log",
+ "serde",
+ "serde_json",
+ "tiny_http",
+ "ureq",
+]
 
 [[package]]
 name = "flate2"
